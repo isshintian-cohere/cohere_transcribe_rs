@@ -231,7 +231,12 @@ jobs:
       # Install the MLX C++ library and its headers via Homebrew.
       # mlx-c (C bindings) is not in Homebrew, so we build it from source below.
       - name: Install MLX C++ via Homebrew
-        run: brew install mlx
+        id: mlx-version
+        run: |
+          brew install mlx
+          MLX_VER=$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          echo "version=$MLX_VER" >> "$GITHUB_OUTPUT"
+          echo "MLX version: $MLX_VER"
 
       # Cache mlx-c to avoid rebuilding on every run.
       # Cache key includes the mlx version so an mlx upgrade triggers a rebuild.
@@ -240,7 +245,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /opt/mlx
-          key: mlxc-${{ runner.os }}-$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          key: mlxc-${{ runner.os }}-${{ steps.mlx-version.outputs.version }}
           restore-keys: mlxc-${{ runner.os }}-
 
       - name: Build and install mlx-c from source

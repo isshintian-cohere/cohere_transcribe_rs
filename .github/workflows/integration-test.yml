@@ -324,14 +324,19 @@ jobs:
           restore-keys: macos-arm64-mlx-integ-cargo-
 
       - name: Install MLX via Homebrew
-        run: brew install mlx
+        id: mlx-version
+        run: |
+          brew install mlx
+          MLX_VER=$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          echo "version=$MLX_VER" >> "$GITHUB_OUTPUT"
+          echo "MLX version: $MLX_VER"
 
       - name: Cache mlx-c
         id: cache-mlxc
         uses: actions/cache@v4
         with:
           path: /opt/mlx
-          key: mlxc-${{ runner.os }}-integ-$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          key: mlxc-${{ runner.os }}-integ-${{ steps.mlx-version.outputs.version }}
           restore-keys: mlxc-${{ runner.os }}-integ-
 
       - name: Build mlx-c (if not cached)
