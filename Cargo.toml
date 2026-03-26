@@ -1,0 +1,64 @@
+[package]
+name = "cohere_transcribe_rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "transcribe"
+path = "src/main.rs"
+
+[[bin]]
+name = "transcribe-server"
+path = "src/bin/server.rs"
+
+[dependencies]
+# libtorch backend (Linux x86_64 / aarch64 with SVE)
+# tch 0.20 (torch 2.4 C++ API) + LIBTORCH_BYPASS_VERSION_CHECK works with libtorch 2.7.x
+# See https://github.com/second-state/qwen3_asr_rs for the same approach
+tch = { version = "0.20", optional = true }
+
+# Model weight loading (shared by both backends)
+safetensors = "0.5.3"
+
+# Audio decoding (pure Rust: WAV, FLAC, MP3, AAC, OGG, ...)
+symphonia = { version = "0.5", features = ["mp3", "aac", "flac", "ogg", "wav"] }
+
+# Audio resampling
+rubato = "0.16"
+
+# FFT for mel spectrogram computation
+rustfft = "6"
+num-complex = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# API server
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tempfile = "3"
+
+[features]
+# Exactly one backend must be selected.
+# tch-backend: libtorch C++ (Linux x86_64 / aarch64, default)
+# mlx:         Apple MLX via C FFI (macOS Apple Silicon only)
+default = ["tch-backend"]
+tch-backend = ["dep:tch"]
+mlx = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"

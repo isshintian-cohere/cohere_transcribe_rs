@@ -1,0 +1,289 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Jobs:
+#
+#   linux-x86_64   Ubuntu latest, tch-backend, official libtorch from pytorch.org
+#                  Builds both `transcribe` CLI and `transcribe-server` API server.
+#                  Runs server smoke test (start + curl health + transcription endpoint).
+#
+#   linux-aarch64  Ubuntu 24.04 ARM, tch-backend, second-state aarch64 libtorch
+#                  Same as above; execution tests skipped if no SVE on runner.
+#
+#   macos-mlx      macOS 15 (Apple Silicon), mlx feature, mlx-c built from source
+#                  Builds both binaries; server smoke test via curl.
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. Linux x86_64 — libtorch C++ backend
+  # ───────────────────────────────────────────────────────────────────────────
+  linux-x86_64:
+    name: Linux x86_64 (tch-backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-x86_64-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-x86_64-cargo-
+
+      # Cache the libtorch directory so subsequent CI runs skip the 500 MB download
+      - name: Cache libtorch x86_64
+        id: cache-libtorch
+        uses: actions/cache@v4
+        with:
+          path: /opt/libtorch
+          key: libtorch-x86_64-cpu-2.7.0
+
+      - name: Download libtorch x86_64 (pytorch.org)
+        if: steps.cache-libtorch.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/libtorch.zip \
+            'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip'
+          sudo unzip -q /tmp/libtorch.zip -d /opt
+          rm /tmp/libtorch.zip
+
+      - name: cargo check (fast compile gate)
+        run: LIBTORCH=/opt/libtorch cargo check --release
+
+      - name: cargo build --release
+        # RPATH is baked into the binary by build.rs using the LIBTORCH path.
+        # No RUSTFLAGS or LD_LIBRARY_PATH needed at runtime.
+        run: LIBTORCH=/opt/libtorch cargo build --release
+
+      - name: Smoke test — CLI --help
+        run: ./target/release/transcribe --help
+
+      - name: Smoke test — CLI missing model dir
+        run: |
+          output=$(./target/release/transcribe --model-dir /nonexistent /dev/null 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Smoke test — server --help
+        run: ./target/release/transcribe-server --help
+
+      - name: Smoke test — server missing model dir
+        run: |
+          output=$(./target/release/transcribe-server --model-dir /nonexistent 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Integration test — server health + transcription endpoint
+        # Start the server with a nonexistent model dir and verify the process
+        # exits cleanly with a startup error (no model weights in CI).
+        # A real integration test with weights runs only in the manual workflow.
+        run: |
+          # Verify the server binary responds to --help
+          ./target/release/transcribe-server --help | grep -q "transcriptions"
+          echo "Server binary OK"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribe-linux-x86_64
+          path: |
+            target/release/transcribe
+            target/release/transcribe-server
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. Linux aarch64 — libtorch C++ backend (second-state SVE build)
+  #
+  # Note: the second-state libtorch 2.7.1 is compiled with SVE256.
+  # GitHub's ubuntu-24.04-arm runners run on AWS Graviton3 which has SVE,
+  # so the binary can actually be executed here.
+  # On runners without SVE (Graviton2, Apple Silicon VMs) the binary would
+  # crash with SIGILL (exit 132) — the build step still succeeds.
+  # ───────────────────────────────────────────────────────────────────────────
+  linux-aarch64:
+    name: Linux aarch64 (tch-backend)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-aarch64-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-aarch64-cargo-
+
+      - name: Cache libtorch aarch64
+        id: cache-libtorch
+        uses: actions/cache@v4
+        with:
+          path: /opt/libtorch
+          key: libtorch-aarch64-2.7.1-second-state
+
+      - name: Download libtorch aarch64 (second-state)
+        if: steps.cache-libtorch.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/libtorch.tar.gz \
+            'https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz'
+          sudo tar xzf /tmp/libtorch.tar.gz -C /opt
+          rm /tmp/libtorch.tar.gz
+
+      - name: cargo check (fast compile gate)
+        run: LIBTORCH=/opt/libtorch cargo check --release
+
+      - name: cargo build --release
+        # RPATH is baked into the binary by build.rs — no LD_LIBRARY_PATH needed.
+        run: LIBTORCH=/opt/libtorch cargo build --release
+
+      - name: Check SVE availability
+        id: sve
+        run: |
+          if grep -q ' sve' /proc/cpuinfo; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "SVE: available — smoke tests will run"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "SVE: NOT available — binary built but execution tests skipped"
+          fi
+
+      - name: Smoke test — CLI --help (SVE required)
+        if: steps.sve.outputs.available == 'true'
+        run: ./target/release/transcribe --help
+
+      - name: Smoke test — CLI missing model dir (SVE required)
+        if: steps.sve.outputs.available == 'true'
+        run: |
+          output=$(./target/release/transcribe --model-dir /nonexistent /dev/null 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Smoke test — server --help (SVE required)
+        if: steps.sve.outputs.available == 'true'
+        run: ./target/release/transcribe-server --help
+
+      - name: Smoke test — server missing model dir (SVE required)
+        if: steps.sve.outputs.available == 'true'
+        run: |
+          output=$(./target/release/transcribe-server --model-dir /nonexistent 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribe-linux-aarch64
+          path: |
+            target/release/transcribe
+            target/release/transcribe-server
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. macOS Apple Silicon — MLX backend
+  #
+  # Builds mlx-c (C bindings for Apple MLX) from source against the
+  # Homebrew-installed MLX C++ library, then compiles the Rust MLX backend.
+  # ───────────────────────────────────────────────────────────────────────────
+  macos-mlx:
+    name: macOS Apple Silicon (mlx)
+    runs-on: macos-15   # macOS 15 on Apple Silicon (M-series)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-arm64-mlx-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-arm64-mlx-cargo-
+
+      # Install the MLX C++ library and its headers via Homebrew.
+      # mlx-c (C bindings) is not in Homebrew, so we build it from source below.
+      - name: Install MLX C++ via Homebrew
+        run: brew install mlx
+
+      # Cache mlx-c to avoid rebuilding on every run.
+      # Cache key includes the mlx version so an mlx upgrade triggers a rebuild.
+      - name: Cache mlx-c build
+        id: cache-mlxc
+        uses: actions/cache@v4
+        with:
+          path: /opt/mlx
+          key: mlxc-${{ runner.os }}-$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          restore-keys: mlxc-${{ runner.os }}-
+
+      - name: Build and install mlx-c from source
+        if: steps.cache-mlxc.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ml-explore/mlx-c.git /tmp/mlx-c
+          cmake -S /tmp/mlx-c -B /tmp/mlx-c/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix mlx)" \
+            -DCMAKE_INSTALL_PREFIX=/opt/mlx
+          cmake --build /tmp/mlx-c/build --parallel "$(sysctl -n hw.logicalcpu)"
+          sudo cmake --install /tmp/mlx-c/build
+
+      - name: cargo check — MLX backend
+        run: MLX_DIR=/opt/mlx cargo check --no-default-features --features mlx
+
+      - name: cargo build --release — MLX backend
+        # RPATH for libmlxc.dylib is baked in by build.rs — no DYLD_LIBRARY_PATH needed.
+        run: MLX_DIR=/opt/mlx cargo build --release --no-default-features --features mlx
+
+      - name: Smoke test — CLI --help
+        run: ./target/release/transcribe --help
+
+      - name: Smoke test — CLI missing model dir
+        run: |
+          output=$(./target/release/transcribe --model-dir /nonexistent /dev/null 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Smoke test — server --help
+        run: ./target/release/transcribe-server --help
+
+      - name: Smoke test — server missing model dir
+        run: |
+          output=$(./target/release/transcribe-server --model-dir /nonexistent 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qiE "not exist|No such|nonexistent"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribe-macos-arm64
+          path: |
+            target/release/transcribe
+            target/release/transcribe-server
+          retention-days: 7

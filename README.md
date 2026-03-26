@@ -1,0 +1,383 @@
+# cohere_transcribe_rs
+
+[![CI](https://github.com/your-org/cohere_transcribe_rs/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/cohere_transcribe_rs/actions/workflows/ci.yml)
+
+Transcribe speech to text using the
+[CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+model — a fast Rust CLI with no Python or PyTorch required at runtime.
+
+Supports English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Greek,
+Arabic, Japanese, Chinese, Vietnamese, and Korean.
+
+---
+
+## Backends
+
+Two compute backends are available — select one at compile time:
+
+| Backend | Platform | Feature flag | Accelerator |
+|---------|----------|-------------|-------------|
+| **libtorch** (default) | Linux x86\_64, Linux aarch64 | `--features tch-backend` | CPU (BLAS-optimized) |
+| **MLX** | macOS Apple Silicon | `--features mlx` | Apple GPU (Metal) |
+
+Both backends produce identical output from the same weights.
+
+---
+
+## Requirements
+
+**All platforms:**
+- **Rust** stable (1.70+) — install from [rustup.rs](https://rustup.rs)
+- **8 GB RAM** — the model weights expand to ~5.6 GB at runtime
+- **Python + sentencepiece** — one-time only, to extract `vocab.json` (Step 3)
+
+**Linux (libtorch backend):**
+- **libtorch** C++ library — downloaded once, ~500 MB (see Step 1a)
+
+**macOS Apple Silicon (MLX backend):**
+- **mlx-c** — C bindings for Apple MLX, built from source (see Step 1b)
+- macOS 14+ with an M-series chip
+
+---
+
+## Setup
+
+### Step 1a — Install libtorch (Linux only)
+
+Pick the build for your platform and extract it to `/opt/libtorch`.
+This is the C++ library from PyTorch.org; no Python runtime is involved.
+
+**Linux x86\_64:**
+```bash
+curl -Lo libtorch.zip \
+  'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip'
+sudo unzip libtorch.zip -d /opt
+```
+
+**Linux ARM64** (AWS Graviton3, Ampere Altra — requires SVE support):
+```bash
+curl -Lo libtorch.tar.gz \
+  'https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz'
+sudo tar xzf libtorch.tar.gz -C /opt
+```
+
+Both commands produce `/opt/libtorch/`. Set `LIBTORCH=/your/path` to use a different location.
+
+> **Docker on macOS:** Extract libtorch to a native Linux path such as `/opt/libtorch`,
+> not onto the macOS volume mount (e.g. `/Users/…`). The Linux linker cannot read
+> large shared libraries through the virtiofs layer.
+
+---
+
+### Step 1b — Install mlx-c (macOS Apple Silicon only)
+
+The MLX backend links against [mlx-c](https://github.com/ml-explore/mlx-c), the C API
+wrapper for Apple's MLX framework.
+
+```bash
+# 1. Install the MLX C++ library via Homebrew
+brew install mlx
+
+# 2. Build and install mlx-c from source
+git clone --depth 1 https://github.com/ml-explore/mlx-c.git /tmp/mlx-c
+cmake -S /tmp/mlx-c -B /tmp/mlx-c/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix mlx)" \
+  -DCMAKE_INSTALL_PREFIX=/opt/mlx
+cmake --build /tmp/mlx-c/build --parallel "$(sysctl -n hw.logicalcpu)"
+sudo cmake --install /tmp/mlx-c/build
+```
+
+This produces `/opt/mlx/lib/libmlxc.dylib` and `/opt/mlx/include/mlx/c/`.
+Set `MLX_DIR=/your/path` to use a different install location.
+
+---
+
+### Step 2 — Download model weights
+
+```bash
+pip install huggingface_hub
+huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+  --local-dir models/cohere-transcribe-03-2026
+```
+
+---
+
+### Step 3 — Extract the vocabulary (one time only)
+
+The model uses a SentencePiece tokenizer. Run this script once to produce `vocab.json`,
+which the Rust binary reads at runtime. Python is not needed after this step.
+
+```bash
+pip install sentencepiece
+python tools/extract_vocab.py --model_dir models/cohere-transcribe-03-2026
+```
+
+---
+
+### Step 4 — Build
+
+**Linux (libtorch backend, default):**
+```bash
+LIBTORCH=/opt/libtorch cargo build --release
+```
+
+The `LIBTORCH` path is baked into the binary's RPATH by `build.rs`, so the binary
+runs without `LD_LIBRARY_PATH`.
+
+**macOS Apple Silicon (MLX backend):**
+```bash
+MLX_DIR=/opt/mlx cargo build --release --no-default-features --features mlx
+```
+
+The `MLX_DIR` path is similarly embedded as RPATH — no `DYLD_LIBRARY_PATH` at runtime.
+
+> **Docker on macOS (Linux builds):** If the project source is on a macOS volume mount,
+> set `CARGO_TARGET_DIR` to a native Linux path to prevent SIGBUS during compilation:
+> ```bash
+> LIBTORCH=/opt/libtorch CARGO_TARGET_DIR=/tmp/cohere_target cargo build --release -j 1
+> ```
+
+The binary is written to `target/release/transcribe`
+(or `$CARGO_TARGET_DIR/release/transcribe` if you set that variable).
+
+---
+
+## Running
+
+The binary has the library path baked into its RPATH at build time, so no environment
+variables are needed at runtime — just run it directly:
+
+```bash
+./target/release/transcribe --model-dir models/cohere-transcribe-03-2026 recording.wav
+```
+
+This works for both backends (Linux/libtorch and macOS/MLX) as long as you built with
+the correct `LIBTORCH=` or `MLX_DIR=` path and haven't moved the library since building.
+
+If you have moved libtorch or need to override the path, the `transcribe.sh` wrapper sets
+`LD_LIBRARY_PATH` as a fallback:
+
+```bash
+./transcribe.sh --model-dir models/cohere-transcribe-03-2026 recording.wav
+```
+
+The wrapper searches for libtorch in: `$LIBTORCH` → `/opt/libtorch` → `./libtorch`.
+
+---
+
+## Options
+
+```
+USAGE:
+    transcribe --model-dir <PATH> [OPTIONS] <AUDIO>...
+
+ARGUMENTS:
+    <AUDIO>...          One or more audio files to transcribe
+
+OPTIONS:
+    -m, --model-dir     Path to the model directory
+    -l, --language      Language code [default: en]
+        --no-punctuation  Strip punctuation from output
+        --max-tokens    Max tokens to generate per segment [default: 448]
+    -v, --verbose       Enable info logging (-vv for debug)
+    -h, --help          Print help
+```
+
+### Language codes
+
+| Code | Language   | Code | Language   | Code | Language  |
+|------|------------|------|------------|------|-----------|
+| `en` | English    | `de` | German     | `nl` | Dutch     |
+| `fr` | French     | `es` | Spanish    | `pl` | Polish    |
+| `ar` | Arabic     | `it` | Italian    | `el` | Greek     |
+| `ja` | Japanese   | `pt` | Portuguese | `vi` | Vietnamese|
+| `zh` | Chinese    | `ko` | Korean     |      |           |
+
+### Audio formats
+
+WAV, FLAC, MP3, AAC, OGG — anything supported by
+[symphonia](https://github.com/pdeljanov/Symphonia).
+Audio is automatically converted to 16 kHz mono.
+
+Files longer than ~35 seconds are split into overlapping chunks (5 s overlap)
+and the results joined automatically.
+
+---
+
+## API Server
+
+`transcribe-server` is an OpenAI-compatible HTTP server built on [Axum](https://github.com/tokio-rs/axum).
+It serves the same model as the CLI and is a drop-in replacement for the OpenAI Whisper API.
+
+### Start the server
+
+```bash
+# Linux (tch-backend)
+./target/release/transcribe-server \
+  --model-dir models/cohere-transcribe-03-2026 \
+  --host 0.0.0.0 \
+  --port 8080
+
+# macOS (MLX backend) — same binary, no extra flags needed
+./target/release/transcribe-server \
+  --model-dir models/cohere-transcribe-03-2026
+```
+
+The server loads the model at startup (~30–90 s depending on hardware), then prints:
+```
+Listening on http://0.0.0.0:8080
+Endpoint: POST http://0.0.0.0:8080/v1/audio/transcriptions
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/audio/transcriptions` | Transcribe audio — OpenAI compatible |
+| `GET`  | `/health` | Liveness probe → `{"status":"ok"}` |
+
+### Transcription request
+
+```bash
+curl -X POST http://localhost:8080/v1/audio/transcriptions \
+  -F "file=@recording.wav" \
+  -F "model=cohere-transcribe" \
+  -F "language=en" \
+  -F "response_format=json"
+```
+
+**Form fields** (all OpenAI-compatible):
+
+| Field | Required | Default | Notes |
+|-------|----------|---------|-------|
+| `file` | yes | — | Audio bytes (WAV, MP3, FLAC, AAC, OGG) |
+| `model` | yes | — | Any string; the server ignores it |
+| `language` | no | `en` | ISO-639-1 code |
+| `response_format` | no | `json` | `json`, `text`, `verbose_json`, `srt`, `vtt` |
+| `temperature` | no | — | Ignored; always greedy |
+| `prompt` | no | — | Ignored |
+
+**Response formats:**
+
+```bash
+# json (default)
+{"text": "Hello, world."}
+
+# text
+Hello, world.
+
+# verbose_json
+{"task":"transcribe","language":"en","duration":3.0,"text":"Hello, world.","segments":[...]}
+
+# srt
+1
+00:00:00,000 --> 00:00:03,000
+Hello, world.
+
+# vtt
+WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+Hello, world.
+```
+
+### Using with OpenAI client libraries
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="not-used",  # required by the client, ignored by the server
+)
+
+with open("recording.wav", "rb") as f:
+    transcript = client.audio.transcriptions.create(
+        model="cohere-transcribe",
+        file=f,
+        language="en",
+    )
+print(transcript.text)
+```
+
+```javascript
+import OpenAI from "openai";
+import fs from "fs";
+
+const openai = new OpenAI({
+  baseURL: "http://localhost:8080/v1",
+  apiKey: "not-used",
+});
+
+const transcript = await openai.audio.transcriptions.create({
+  model: "cohere-transcribe",
+  file: fs.createReadStream("recording.wav"),
+  language: "en",
+});
+console.log(transcript.text);
+```
+
+### Server options
+
+```
+OPTIONS:
+  -m, --model-dir     Model directory (required)
+      --host          Bind address [default: 0.0.0.0]
+  -p, --port          Port [default: 8080]
+  -l, --language      Default language when not specified by client [default: en]
+      --max-tokens    Max tokens per segment [default: 448]
+  -v, --verbose       Logging (-v info, -vv debug)
+  -h, --help          Print help
+```
+
+---
+
+## Examples
+
+```bash
+# Transcribe a single file
+./transcribe.sh -m models/cohere-transcribe-03-2026 interview.mp3
+
+# French, no punctuation
+./transcribe.sh -m models/cohere-transcribe-03-2026 --language fr --no-punctuation speech.wav
+
+# Multiple files — prints filename before each transcript
+./transcribe.sh -m models/cohere-transcribe-03-2026 call1.wav call2.wav call3.flac
+
+# Show model loading progress
+./transcribe.sh -m models/cohere-transcribe-03-2026 -v audio.wav
+```
+
+---
+
+## Troubleshooting
+
+**`libtorch not found`** (Linux)
+Set `LIBTORCH=/path/to/libtorch` before running `transcribe.sh`, or install to `/opt/libtorch`.
+
+**`libmlxc.dylib not found`** (macOS)
+The library path is baked into the binary RPATH at build time. If you moved mlx-c
+after building, rebuild with `MLX_DIR=/new/path cargo build …`. As a temporary
+workaround: `DYLD_LIBRARY_PATH=/opt/mlx/lib:$(brew --prefix mlx)/lib ./target/release/transcribe …`.
+
+**`Missing required file 'vocab.json'`**
+Run `python tools/extract_vocab.py --model_dir <model_dir>` (Step 3).
+
+**Process killed immediately (exit 137)**
+Out of memory. The model needs ~5.6 GB of RAM. Check with `free -h` (Linux) or
+Activity Monitor (macOS).
+
+**`Illegal instruction` (exit 132) on ARM Linux**
+The ARM64 libtorch build requires SVE (Scalable Vector Extension), available on
+Graviton3, Ampere Altra, and similar server-class CPUs. It does not run on
+Apple Silicon Linux VMs, which only expose NEON. Use a native Linux ARM64 server with SVE,
+or use the macOS MLX backend on Apple hardware.
+
+**`ELF section name out of range` at link time** (Linux)
+libtorch is on a Docker volume-mounted macOS path. Move it to a native Linux
+path such as `/opt/libtorch` (see Step 1a note).
+
+**MLX build fails: `mlxc` not found**
+Ensure you ran Step 1b and set `MLX_DIR=/opt/mlx` (or wherever you installed mlx-c).
+Verify with `ls /opt/mlx/lib/libmlxc.dylib`.

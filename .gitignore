@@ -1,0 +1,6 @@
+/target
+models/
+*.safetensors
+libtorch/
+Cargo.lock
+# Audio test fixtures are intentionally tracked — see tests/fixtures/

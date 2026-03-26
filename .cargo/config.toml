@@ -1,0 +1,46 @@
+# Build configuration for cohere_transcribe_rs
+#
+# BUILDING (Linux — tch-backend)
+# --------------------------------
+# 1. Download libtorch (no Python/PyTorch required):
+#
+#    Linux x86_64 (CPU):
+#      curl -Lo libtorch.zip \
+#        https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip
+#      sudo unzip libtorch.zip -d /opt     # → /opt/libtorch/
+#
+#    Linux ARM64 (requires SVE on the CPU):
+#      curl -Lo libtorch.tar.gz \
+#        https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
+#      sudo tar xzf libtorch.tar.gz -C /opt    # → /opt/libtorch/
+#
+#    NOTE: libtorch must be on a native Linux filesystem path, NOT on a
+#    Docker volume-mounted macOS path (ld cannot read large .so through virtiofs).
+#
+# 2. Build:
+#      LIBTORCH=/opt/libtorch cargo build --release
+#
+#    The RPATH is baked into the binary by build.rs using the LIBTORCH path, so
+#    no LD_LIBRARY_PATH is needed at runtime — just run the binary directly.
+#
+#    When the project source is on a Docker volume mount, also set:
+#      CARGO_TARGET_DIR=/tmp/cohere_target   (avoids SIGBUS during rustc)
+#
+# RUNNING (Linux)
+# ---------------
+#    ./target/release/transcribe --model-dir <model_dir> audio.wav
+#
+#    No LD_LIBRARY_PATH needed — the libtorch path is embedded in the binary RPATH.
+#
+# BUILDING (macOS — mlx backend)
+# --------------------------------
+#      MLX_DIR=/opt/mlx cargo build --release --no-default-features --features mlx
+#
+#    RPATH for libmlxc.dylib is also embedded by build.rs.
+#
+# RUNNING (macOS)
+# ---------------
+#    ./target/release/transcribe --model-dir <model_dir> audio.wav
+
+[env]
+LIBTORCH_BYPASS_VERSION_CHECK = "1"

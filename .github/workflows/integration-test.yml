@@ -1,0 +1,380 @@
+name: Integration Tests
+
+# Run end-to-end transcription tests with real model weights.
+#
+# Two triggering modes:
+#
+#   1. Manual dispatch (workflow_dispatch) — run on demand from the Actions tab.
+#      Use this before a release or after significant model/inference changes.
+#
+#   2. Schedule — weekly, to catch regressions from dependency updates.
+#
+# Model weights (~2.8 GB) are stored as a GitHub Actions cache entry populated
+# by the "seed-model-cache" job below.  On first run, set SEED_CACHE=true in
+# the workflow_dispatch inputs to download from HuggingFace and populate the cache.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_cache:
+        description: "Download weights from HuggingFace and (re)populate the cache"
+        type: boolean
+        default: false
+      platform:
+        description: "Platform to test"
+        type: choice
+        options: [linux-x86_64, linux-aarch64, macos-mlx, all]
+        default: linux-x86_64
+
+  schedule:
+    - cron: "0 3 * * 1"  # Every Monday at 03:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+  MODEL_DIR: models/cohere-transcribe-03-2026
+  # Cache key — bump this string to force a cache refresh
+  MODEL_CACHE_KEY: cohere-model-weights-2026-03-v1
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Optional: populate model cache from HuggingFace.
+  # Run manually with seed_cache=true when weights change or cache expires.
+  # ─────────────────────────────────────────────────────────────────────────────
+  seed-model-cache:
+    name: Seed model cache from HuggingFace
+    if: github.event.inputs.seed_cache == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download weights from HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install --quiet huggingface_hub sentencepiece
+          huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+            --local-dir "$MODEL_DIR" \
+            --token "$HF_TOKEN"
+          python tools/extract_vocab.py --model_dir "$MODEL_DIR"
+          ls -lh "$MODEL_DIR/"
+
+      - name: Save model to Actions cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ${{ env.MODEL_CACHE_KEY }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Integration test — Linux x86_64, tch-backend
+  # ─────────────────────────────────────────────────────────────────────────────
+  test-linux-x86_64:
+    name: Integration — Linux x86_64
+    runs-on: ubuntu-latest
+    needs: [seed-model-cache]
+    # Run when: scheduled, or manual dispatch for this platform or 'all'.
+    # always() ensures the job runs even when seed-model-cache was skipped
+    # (cache already populated from a prior seed run).
+    if: |
+      always() && (
+        github.event_name == 'schedule' ||
+        github.event.inputs.platform == 'linux-x86_64' ||
+        github.event.inputs.platform == 'all'
+      )
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-x86_64-integ-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-x86_64-integ-cargo-
+
+      - name: Cache libtorch x86_64
+        id: cache-libtorch
+        uses: actions/cache@v4
+        with:
+          path: /opt/libtorch
+          key: libtorch-x86_64-cpu-2.7.0
+
+      - name: Download libtorch (if not cached)
+        if: steps.cache-libtorch.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/libtorch.zip \
+            'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip'
+          sudo unzip -q /tmp/libtorch.zip -d /opt
+          rm /tmp/libtorch.zip
+
+      - name: Restore model weights from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ${{ env.MODEL_CACHE_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Build both binaries
+        run: LIBTORCH=/opt/libtorch cargo build --release
+
+      - name: CLI — transcribe sample1.wav
+        run: |
+          result=$(./target/release/transcribe \
+            --model-dir "$MODEL_DIR" \
+            --language en \
+            tests/fixtures/sample1.wav)
+          echo "Transcript: $result"
+          # Verify output contains key words from the reference transcript
+          echo "$result" | grep -qi "contribution\|appreciate\|issue"
+
+      - name: CLI — transcribe sample2.wav (quick brown fox)
+        run: |
+          result=$(./target/release/transcribe \
+            --model-dir "$MODEL_DIR" \
+            --language en \
+            tests/fixtures/sample2.wav)
+          echo "Transcript: $result"
+          # Reference: "The quick brown fox jumps over the lazy dog."
+          echo "$result" | grep -qi "fox\|lazy\|dog"
+
+      - name: Server — start, health check, transcription, stop
+        run: |
+          # Start server in background
+          ./target/release/transcribe-server \
+            --model-dir "$MODEL_DIR" \
+            --port 18080 \
+            --verbose &
+          SERVER_PID=$!
+          echo "Server PID: $SERVER_PID"
+
+          # Wait for server ready (up to 120 s — model loading takes time)
+          for i in $(seq 1 120); do
+            if curl -sf http://localhost:18080/health > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+
+          # Health endpoint
+          curl -sf http://localhost:18080/health | grep -q '"ok"'
+          echo "Health OK"
+
+          # JSON response
+          json_resp=$(curl -sf \
+            -X POST http://localhost:18080/v1/audio/transcriptions \
+            -F "file=@tests/fixtures/sample2.wav;type=audio/wav" \
+            -F "model=cohere-transcribe" \
+            -F "language=en" \
+            -F "response_format=json")
+          echo "JSON: $json_resp"
+          echo "$json_resp" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          assert 'text' in d, 'Missing text'
+          print('text:', d['text'])
+          "
+
+          # Text response
+          curl -sf \
+            -X POST http://localhost:18080/v1/audio/transcriptions \
+            -F "file=@tests/fixtures/sample2.wav;type=audio/wav" \
+            -F "model=cohere-transcribe" \
+            -F "response_format=text"
+          echo
+
+          # verbose_json response
+          curl -sf \
+            -X POST http://localhost:18080/v1/audio/transcriptions \
+            -F "file=@tests/fixtures/sample2.wav;type=audio/wav" \
+            -F "model=cohere-transcribe" \
+            -F "response_format=verbose_json" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          assert d['task']=='transcribe'
+          assert 'text' in d and 'duration' in d and 'segments' in d
+          print('verbose_json OK — duration:', d['duration'])
+          "
+
+          kill $SERVER_PID
+          echo "All server integration tests passed"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Integration test — Linux aarch64, tch-backend
+  # ─────────────────────────────────────────────────────────────────────────────
+  test-linux-aarch64:
+    name: Integration — Linux aarch64
+    runs-on: ubuntu-24.04-arm
+    if: |
+      always() && (
+        github.event_name == 'schedule' ||
+        github.event.inputs.platform == 'linux-aarch64' ||
+        github.event.inputs.platform == 'all'
+      )
+    needs: [seed-model-cache]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-aarch64-integ-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-aarch64-integ-cargo-
+
+      - name: Cache libtorch aarch64
+        id: cache-libtorch
+        uses: actions/cache@v4
+        with:
+          path: /opt/libtorch
+          key: libtorch-aarch64-2.7.1-second-state
+
+      - name: Download libtorch aarch64 (if not cached)
+        if: steps.cache-libtorch.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/libtorch.tar.gz \
+            'https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz'
+          sudo tar xzf /tmp/libtorch.tar.gz -C /opt
+          rm /tmp/libtorch.tar.gz
+
+      - name: Restore model weights from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ${{ env.MODEL_CACHE_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Build both binaries
+        run: LIBTORCH=/opt/libtorch cargo build --release
+
+      - name: Check SVE availability
+        id: sve
+        run: |
+          grep -q ' sve' /proc/cpuinfo && \
+            echo "available=true" >> "$GITHUB_OUTPUT" || \
+            echo "available=false" >> "$GITHUB_OUTPUT"
+
+      - name: CLI — transcribe sample2.wav
+        if: steps.sve.outputs.available == 'true'
+        run: |
+          result=$(./target/release/transcribe \
+            --model-dir "$MODEL_DIR" \
+            --language en \
+            tests/fixtures/sample2.wav)
+          echo "Transcript: $result"
+          echo "$result" | grep -qi "fox\|lazy\|dog"
+
+      - name: Server — health + transcription
+        if: steps.sve.outputs.available == 'true'
+        run: |
+          ./target/release/transcribe-server \
+            --model-dir "$MODEL_DIR" --port 18080 &
+          SERVER_PID=$!
+          for i in $(seq 1 120); do
+            curl -sf http://localhost:18080/health > /dev/null 2>&1 && break; sleep 1
+          done
+          curl -sf http://localhost:18080/health | grep -q '"ok"'
+          curl -sf \
+            -X POST http://localhost:18080/v1/audio/transcriptions \
+            -F "file=@tests/fixtures/sample2.wav;type=audio/wav" \
+            -F "model=cohere-transcribe" | python3 -c "import sys,json; assert 'text' in json.load(sys.stdin)"
+          kill $SERVER_PID
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Integration test — macOS Apple Silicon, mlx backend
+  # ─────────────────────────────────────────────────────────────────────────────
+  test-macos-mlx:
+    name: Integration — macOS Apple Silicon (mlx)
+    runs-on: macos-15
+    if: |
+      always() && (
+        github.event_name == 'schedule' ||
+        github.event.inputs.platform == 'macos-mlx' ||
+        github.event.inputs.platform == 'all'
+      )
+    needs: [seed-model-cache]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-arm64-mlx-integ-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-arm64-mlx-integ-cargo-
+
+      - name: Install MLX via Homebrew
+        run: brew install mlx
+
+      - name: Cache mlx-c
+        id: cache-mlxc
+        uses: actions/cache@v4
+        with:
+          path: /opt/mlx
+          key: mlxc-${{ runner.os }}-integ-$(brew info --json mlx | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['versions']['stable'])")
+          restore-keys: mlxc-${{ runner.os }}-integ-
+
+      - name: Build mlx-c (if not cached)
+        if: steps.cache-mlxc.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ml-explore/mlx-c.git /tmp/mlx-c
+          cmake -S /tmp/mlx-c -B /tmp/mlx-c/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix mlx)" \
+            -DCMAKE_INSTALL_PREFIX=/opt/mlx
+          cmake --build /tmp/mlx-c/build --parallel "$(sysctl -n hw.logicalcpu)"
+          sudo cmake --install /tmp/mlx-c/build
+
+      - name: Restore model weights from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ${{ env.MODEL_CACHE_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Build both binaries (MLX backend)
+        run: MLX_DIR=/opt/mlx cargo build --release --no-default-features --features mlx
+
+      - name: CLI — transcribe sample2.wav
+        run: |
+          result=$(./target/release/transcribe \
+            --model-dir "$MODEL_DIR" \
+            --language en \
+            tests/fixtures/sample2.wav)
+          echo "Transcript: $result"
+          echo "$result" | grep -qi "fox\|lazy\|dog"
+
+      - name: Server — health + transcription
+        run: |
+          ./target/release/transcribe-server \
+            --model-dir "$MODEL_DIR" --port 18080 &
+          SERVER_PID=$!
+          for i in $(seq 1 120); do
+            curl -sf http://localhost:18080/health > /dev/null 2>&1 && break; sleep 1
+          done
+          curl -sf http://localhost:18080/health | grep -q '"ok"'
+          curl -sf \
+            -X POST http://localhost:18080/v1/audio/transcriptions \
+            -F "file=@tests/fixtures/sample2.wav;type=audio/wav" \
+            -F "model=cohere-transcribe" | python3 -c "import sys,json; assert 'text' in json.load(sys.stdin)"
+          kill $SERVER_PID
