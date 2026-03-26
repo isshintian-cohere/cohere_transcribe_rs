@@ -65,6 +65,15 @@ jobs:
             libtorch-url: >-
               https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-x86_64-2.7.1.tar.gz
 
+          # ── Linux x86_64 — CUDA 12.6 libtorch ────────────────────────────
+          - os: ubuntu-latest
+            name: Linux x86_64 (CUDA)
+            backend: tch
+            asset-name: transcribe-linux-x86_64-cuda
+            needs-cuda: true
+            libtorch-url: >-
+              https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-x86_64-cuda12.6-2.7.1.tar.gz
+
           # ── Linux aarch64 — CPU libtorch (SVE256, Graviton3 / Altra) ─────
           - os: ubuntu-24.04-arm
             name: Linux aarch64
@@ -72,6 +81,15 @@ jobs:
             asset-name: transcribe-linux-aarch64
             libtorch-url: >-
               https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
+
+          # ── Linux aarch64 — CUDA 12.6 libtorch (Jetson / Grace) ─────────
+          - os: ubuntu-24.04-arm
+            name: Linux aarch64 (CUDA)
+            backend: tch
+            asset-name: transcribe-linux-aarch64-cuda
+            needs-cuda: true
+            libtorch-url: >-
+              https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-cuda12.6-2.7.1.tar.gz
 
           # ── macOS Apple Silicon — MLX backend ────────────────────────────
           - os: macos-15
@@ -86,6 +104,23 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      # ── CUDA toolkit (for linking CUDA-enabled libtorch) ─────────────────
+      - name: Install CUDA toolkit (x86_64)
+        if: matrix.needs-cuda && runner.arch == 'X64'
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-6
+
+      - name: Install CUDA toolkit and BLAS (aarch64)
+        if: matrix.needs-cuda && runner.arch == 'ARM64'
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-6 libopenblas-dev
 
       # ── libtorch (Linux) ──────────────────────────────────────────────────
       - name: Download and extract libtorch
@@ -110,6 +145,14 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/opt/mlx
           cmake --build /tmp/mlx-c/build --parallel "$(sysctl -n hw.logicalcpu)"
           sudo cmake --install /tmp/mlx-c/build
+
+      # ── Set linker flags for CUDA builds ──────────────────────────────────
+      - name: Set CUDA linker flags
+        if: matrix.needs-cuda
+        run: |
+          FLAGS="-C link-arg=-Wl,-rpath-link,/usr/local/cuda/lib64"
+          echo "RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build release binaries (tch-backend)
