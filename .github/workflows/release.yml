@@ -161,6 +161,8 @@ jobs:
       - name: Build release binaries (mlx)
         if: matrix.backend == 'mlx'
         run: cargo build --release --no-default-features --features mlx
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       # ── Download shared vocab ─────────────────────────────────────────────
       - name: Download vocab.json

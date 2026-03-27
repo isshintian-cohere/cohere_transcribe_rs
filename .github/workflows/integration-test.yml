@@ -337,6 +337,8 @@ jobs:
 
       - name: Build both binaries (MLX backend)
         run: cargo build --release --no-default-features --features mlx
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: CLI — transcribe sample2.wav
         run: |

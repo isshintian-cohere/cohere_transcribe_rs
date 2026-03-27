@@ -10,7 +10,7 @@ fn bf16_to_f32(x: u16) -> f32 {
 }
 
 pub struct Weights {
-    data: Vec<u8>,
+    _data: Vec<u8>,
     tensors: HashMap<String, Tensor>,
 }
 
@@ -71,7 +71,7 @@ impl Weights {
         }
 
         tracing::info!("Loaded {} tensors", tensors.len());
-        Ok(Weights { data, tensors })
+        Ok(Weights { _data: data, tensors })
     }
 
     pub fn get(&self, name: &str) -> Result<&Tensor> {

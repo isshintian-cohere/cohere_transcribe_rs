@@ -52,12 +52,19 @@ fn build_mlx() {
         );
     }
 
+    // Ensure CMake and Rust agree on the macOS deployment target.
+    // Without this, CMake may compile C++ for macOS 15.x while Rust links
+    // for macOS 11.0, causing `___isPlatformVersionAtLeast` linker errors.
+    let deployment_target = std::env::var("MACOSX_DEPLOYMENT_TARGET")
+        .unwrap_or_else(|_| "14.0".to_string());
+
     // Build mlx-c via CMake (fetches and builds MLX C++ as a dependency)
     let dst = cmake::Config::new(&mlx_c_dir)
         .define("MLX_BUILD_TESTS", "OFF")
         .define("MLX_BUILD_EXAMPLES", "OFF")
         .define("MLX_BUILD_BENCHMARKS", "OFF")
         .define("BUILD_SHARED_LIBS", "OFF")
+        .define("CMAKE_OSX_DEPLOYMENT_TARGET", &deployment_target)
         .build();
 
     // Link paths — CMake may output to lib/ or lib64/

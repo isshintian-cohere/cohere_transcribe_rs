@@ -232,9 +232,13 @@ jobs:
 
       - name: cargo check — MLX backend
         run: cargo check --no-default-features --features mlx
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: cargo build --release — MLX backend
         run: cargo build --release --no-default-features --features mlx
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Smoke test — CLI --help
         run: ./target/release/transcribe --help

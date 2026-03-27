@@ -23,7 +23,7 @@ use axum::{
     Json, Router,
 };
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -183,7 +183,7 @@ async fn transcribe_audio(
     let mut filename: Option<String> = None;
     let mut language: Option<String> = None;
     let mut response_format = "json".to_string();
-    let mut punctuation = true;
+    let punctuation = true;
 
     // Parse multipart fields
     while let Some(field) = multipart.next_field().await? {
@@ -376,7 +376,7 @@ fn transcribe_chunk(
         );
     }
 
-    #[allow(unreachable_code)]
+    #[cfg(not(any(feature = "tch-backend", feature = "mlx")))]
     anyhow::bail!("No backend compiled — build with --features tch-backend or mlx")
 }
 
@@ -505,7 +505,7 @@ fn load_model(args: &Args) -> Result<ModelState> {
         });
     }
 
-    #[allow(unreachable_code)]
+    #[cfg(not(any(feature = "tch-backend", feature = "mlx")))]
     anyhow::bail!("No backend compiled — build with --features tch-backend or mlx")
 }
 

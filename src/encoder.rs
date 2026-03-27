@@ -5,7 +5,6 @@
 ///   RelPositionalEncoding  → relative sinusoidal positional embeddings
 ///   ConformerLayer × 48  → FF + RelPosAttn + ConvModule + FF
 use anyhow::{Context, Result};
-use std::f64::consts::PI;
 use tch::{Kind, Tensor};
 
 use crate::config::ModelConfig;
@@ -418,7 +417,6 @@ pub struct ConformerEncoder {
     layers: Vec<ConformerLayer>,
     enc_dec_proj_w: Option<Tensor>,
     enc_dec_proj_b: Option<Tensor>,
-    n_heads: i64,
     d_model: i64,
 }
 
@@ -454,7 +452,6 @@ impl ConformerEncoder {
             layers,
             enc_dec_proj_w,
             enc_dec_proj_b,
-            n_heads,
             d_model,
         })
     }

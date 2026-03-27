@@ -94,21 +94,6 @@ impl DecoderAttn {
         (q, k, v)
     }
 
-    fn forward_with_kv(
-        &self,
-        hidden_states: &Tensor,
-        source: &Tensor,
-        mask: Option<&Tensor>,
-    ) -> Tensor {
-        let (b, t, _) = hidden_states.size3().unwrap();
-        let (q, k, v) = self.project_qkv(hidden_states, source);
-        let out = sdpa(&q, &k, &v, mask);
-        let out = out
-            .transpose(1, 2)
-            .contiguous()
-            .view([b, t, self.hidden]);
-        linear(&out, &self.out_w, &self.out_b)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +262,6 @@ pub struct TransformerDecoder {
     head_b: Tensor,
     n_heads: i64,
     head_dim: i64,
-    hidden: i64,
 }
 
 impl TransformerDecoder {
@@ -334,7 +318,6 @@ impl TransformerDecoder {
             head_b,
             n_heads,
             head_dim,
-            hidden,
         })
     }
 
