@@ -71,7 +71,12 @@ pub fn load_audio(path: impl AsRef<Path>, target_sr: usize) -> Result<Vec<f32>> 
     }
 
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .context("Unsupported audio format")?;
 
     let mut format = probed.format;
@@ -85,11 +90,7 @@ pub fn load_audio(path: impl AsRef<Path>, target_sr: usize) -> Result<Vec<f32>> 
         .codec_params
         .sample_rate
         .context("Unknown sample rate")? as usize;
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(1);
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
 
     let track_id = track.id;
     let mut decoder = symphonia::default::get_codecs()
@@ -226,7 +227,13 @@ fn resample(input: &[f32], src_sr: usize, dst_sr: usize) -> Result<Vec<f32>> {
 
 /// Compute mel filterbank matrix: (n_mels, n_fft/2+1).
 /// Follows librosa.filters.mel with norm='slaney'.
-pub fn mel_filterbank(sample_rate: usize, n_fft: usize, n_mels: usize, fmin: f64, fmax: f64) -> Vec<f32> {
+pub fn mel_filterbank(
+    sample_rate: usize,
+    n_fft: usize,
+    n_mels: usize,
+    fmin: f64,
+    fmax: f64,
+) -> Vec<f32> {
     let n_freqs = n_fft / 2 + 1;
 
     let hz_to_mel = |f: f64| -> f64 { 2595.0 * (1.0 + f / 700.0).log10() };

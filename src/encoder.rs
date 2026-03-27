@@ -68,7 +68,9 @@ struct ConvSubsampling {
 
 impl ConvSubsampling {
     fn load(weights: &Weights, prefix: &str) -> Result<Self> {
-        let w = |n: &str| -> Result<Tensor> { Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone()) };
+        let w = |n: &str| -> Result<Tensor> {
+            Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
+        };
         Ok(Self {
             c0_w: w("conv.0.weight")?,
             c0_b: w("conv.0.bias")?,
@@ -169,7 +171,9 @@ struct FeedForward {
 
 impl FeedForward {
     fn load(weights: &Weights, prefix: &str) -> Result<Self> {
-        let w = |n: &str| -> Result<Tensor> { Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone()) };
+        let w = |n: &str| -> Result<Tensor> {
+            Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
+        };
         Ok(Self {
             l1_w: w("linear1.weight")?,
             l1_b: w("linear1.bias")?,
@@ -204,7 +208,9 @@ struct ConformerConv {
 
 impl ConformerConv {
     fn load(weights: &Weights, prefix: &str, d_model: i64) -> Result<Self> {
-        let w = |n: &str| -> Result<Tensor> { Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone()) };
+        let w = |n: &str| -> Result<Tensor> {
+            Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
+        };
         Ok(Self {
             pw1_w: w("pointwise_conv1.weight")?,
             pw1_b: w("pointwise_conv1.bias")?,
@@ -237,8 +243,14 @@ impl ConformerConv {
 
         // Depthwise conv
         let pad = (kernel_size - 1) / 2;
-        let x =
-            x.conv1d(&self.dw_w, Some(&self.dw_b), &[1], &[pad], &[1], self.d_model);
+        let x = x.conv1d(
+            &self.dw_w,
+            Some(&self.dw_b),
+            &[1],
+            &[pad],
+            &[1],
+            self.d_model,
+        );
 
         // BatchNorm (eval mode)
         let x = batch_norm_eval(&x, &self.bn_w, &self.bn_b, &self.bn_rm, &self.bn_rv);
@@ -277,7 +289,9 @@ struct RelPosAttn {
 impl RelPosAttn {
     fn load(weights: &Weights, prefix: &str, n_heads: i64, d_model: i64) -> Result<Self> {
         let d_k = d_model / n_heads;
-        let w = |n: &str| -> Result<Tensor> { Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone()) };
+        let w = |n: &str| -> Result<Tensor> {
+            Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
+        };
         Ok(Self {
             q_w: w("linear_q.weight")?,
             q_b: w("linear_q.bias")?,
@@ -309,9 +323,8 @@ impl RelPosAttn {
     fn forward(&self, x: &Tensor, pos_emb: &Tensor) -> Tensor {
         let (b, t, _) = x.size3().unwrap();
 
-        let reshape = |z: &Tensor| -> Tensor {
-            z.view([b, t, self.n_heads, self.d_k]).transpose(1, 2)
-        };
+        let reshape =
+            |z: &Tensor| -> Tensor { z.view([b, t, self.n_heads, self.d_k]).transpose(1, 2) };
 
         let q = reshape(&linear(x, &self.q_w, &self.q_b));
         let k = reshape(&linear(x, &self.k_w, &self.k_b));
@@ -319,9 +332,13 @@ impl RelPosAttn {
 
         // pos_emb: (1, 2T-1, d_model) → (1, 2T-1, H, d_k) → (1, H, 2T-1, d_k)
         let n_pos = pos_emb.size()[1];
-        let p = linear(pos_emb, &self.pos_w, &Tensor::zeros(&[1], (Kind::Float, x.device())))
-            .view([1, n_pos, self.n_heads, self.d_k])
-            .transpose(1, 2);
+        let p = linear(
+            pos_emb,
+            &self.pos_w,
+            &Tensor::zeros(&[1], (Kind::Float, x.device())),
+        )
+        .view([1, n_pos, self.n_heads, self.d_k])
+        .transpose(1, 2);
 
         // pos_bias_u/v: (n_heads, d_k) → (1, n_heads, 1, d_k) for broadcasting
         let u = self.pos_bias_u.view([1, self.n_heads, 1, self.d_k]);
@@ -384,11 +401,7 @@ impl ConformerLayer {
                 d_model,
             )?,
             norm_conv: norm("norm_conv")?,
-            conv: ConformerConv::load(
-                weights,
-                &format!("{}conv.", prefix),
-                d_model,
-            )?,
+            conv: ConformerConv::load(weights, &format!("{}conv.", prefix), d_model)?,
             norm_ff2: norm("norm_feed_forward2")?,
             ff2: FeedForward::load(weights, &format!("{}feed_forward2.", prefix))?,
             norm_out: norm("norm_out")?,
@@ -397,13 +410,27 @@ impl ConformerLayer {
 
     fn forward(&self, x: &Tensor, pos_emb: &Tensor) -> Tensor {
         // FF1 (½-scaled)
-        let x = x + 0.5 * self.ff1.forward(&layer_norm(x, &self.norm_ff1.0, &self.norm_ff1.1));
+        let x = x + 0.5
+            * self
+                .ff1
+                .forward(&layer_norm(x, &self.norm_ff1.0, &self.norm_ff1.1));
         // Self-attention
-        let x = &x + self.self_attn.forward(&layer_norm(&x, &self.norm_self_att.0, &self.norm_self_att.1), pos_emb);
+        let x = &x
+            + self.self_attn.forward(
+                &layer_norm(&x, &self.norm_self_att.0, &self.norm_self_att.1),
+                pos_emb,
+            );
         // Conformer conv
-        let x = &x + self.conv.forward(&layer_norm(&x, &self.norm_conv.0, &self.norm_conv.1));
+        let x = &x
+            + self
+                .conv
+                .forward(&layer_norm(&x, &self.norm_conv.0, &self.norm_conv.1));
         // FF2 (½-scaled)
-        let x = &x + 0.5 * self.ff2.forward(&layer_norm(&x, &self.norm_ff2.0, &self.norm_ff2.1));
+        let x = &x
+            + 0.5
+                * self
+                    .ff2
+                    .forward(&layer_norm(&x, &self.norm_ff2.0, &self.norm_ff2.1));
         // Final norm
         layer_norm(&x, &self.norm_out.0, &self.norm_out.1)
     }
@@ -437,15 +464,14 @@ impl ConformerEncoder {
         }
 
         // Encoder→decoder projection (Linear 1280 → 1024)
-        let (enc_dec_proj_w, enc_dec_proj_b) =
-            if let (Ok(w), Ok(b)) = (
-                weights.get("encoder_decoder_proj.weight"),
-                weights.get("encoder_decoder_proj.bias"),
-            ) {
-                (Some(w.shallow_clone()), Some(b.shallow_clone()))
-            } else {
-                (None, None)
-            };
+        let (enc_dec_proj_w, enc_dec_proj_b) = if let (Ok(w), Ok(b)) = (
+            weights.get("encoder_decoder_proj.weight"),
+            weights.get("encoder_decoder_proj.bias"),
+        ) {
+            (Some(w.shallow_clone()), Some(b.shallow_clone()))
+        } else {
+            (None, None)
+        };
 
         Ok(Self {
             pre_encode,

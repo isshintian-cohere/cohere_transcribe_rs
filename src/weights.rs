@@ -71,7 +71,10 @@ impl Weights {
         }
 
         tracing::info!("Loaded {} tensors", tensors.len());
-        Ok(Weights { _data: data, tensors })
+        Ok(Weights {
+            _data: data,
+            tensors,
+        })
     }
 
     pub fn get(&self, name: &str) -> Result<&Tensor> {

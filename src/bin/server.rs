@@ -257,7 +257,12 @@ async fn transcribe_audio(
         let mut pos = 0;
         while pos < samples.len() {
             let end = (pos + max_samples).min(samples.len());
-            parts.push(transcribe_chunk(&samples[pos..end], &state, &lang, punctuation)?);
+            parts.push(transcribe_chunk(
+                &samples[pos..end],
+                &state,
+                &lang,
+                punctuation,
+            )?);
             if end >= samples.len() {
                 break;
             }
@@ -303,7 +308,10 @@ async fn transcribe_audio(
             );
             (
                 StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8",
+                )],
                 srt,
             )
                 .into_response()
@@ -421,8 +429,7 @@ fn add_dither(samples: &[f32], dither: f32, seed: u64) -> Vec<f32> {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         let v = (rng >> 33) as f32 / (u32::MAX as f32);
-        let noise =
-            (-2.0 * u.max(1e-38).ln()).sqrt() * (2.0 * std::f32::consts::PI * v).cos();
+        let noise = (-2.0 * u.max(1e-38).ln()).sqrt() * (2.0 * std::f32::consts::PI * v).cos();
         *s += dither * noise;
     }
     out
@@ -435,7 +442,11 @@ fn add_dither(samples: &[f32], dither: f32, seed: u64) -> Vec<f32> {
 fn load_model(args: &Args) -> Result<ModelState> {
     let model_dir = &args.model_dir;
 
-    anyhow::ensure!(model_dir.exists(), "Model directory not found: {:?}", model_dir);
+    anyhow::ensure!(
+        model_dir.exists(),
+        "Model directory not found: {:?}",
+        model_dir
+    );
     for f in &["config.json", "model.safetensors", "vocab.json"] {
         anyhow::ensure!(
             model_dir.join(f).exists(),

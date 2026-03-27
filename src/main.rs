@@ -103,13 +103,7 @@ fn main() -> Result<()> {
     // Audio preprocessing config
     let mel_cfg = audio::MelConfig::from_model_config(&cfg);
 
-    run_backend(
-        &args,
-        model_dir,
-        &cfg,
-        &tokenizer,
-        &mel_cfg,
-    )
+    run_backend(&args, model_dir, &cfg, &tokenizer, &mel_cfg)
 }
 
 #[cfg(feature = "tch-backend")]
@@ -237,13 +231,26 @@ fn process_audio_tch(
     let samples = audio::load_audio(audio_path, mel_cfg.sample_rate)
         .with_context(|| format!("Failed to load audio: {:?}", audio_path))?;
 
-    tracing::info!("Audio loaded: {} samples ({:.2}s)", samples.len(), samples.len() as f64 / mel_cfg.sample_rate as f64);
+    tracing::info!(
+        "Audio loaded: {} samples ({:.2}s)",
+        samples.len(),
+        samples.len() as f64 / mel_cfg.sample_rate as f64
+    );
 
     let max_samples = (max_clip_s * mel_cfg.sample_rate as f64) as usize;
     let overlap_samples = (overlap_s * mel_cfg.sample_rate as f64) as usize;
 
     if samples.len() <= max_samples {
-        return transcribe_chunk_tch(&samples, mel_cfg, encoder, decoder, tokenizer, language, punctuation, max_tokens);
+        return transcribe_chunk_tch(
+            &samples,
+            mel_cfg,
+            encoder,
+            decoder,
+            tokenizer,
+            language,
+            punctuation,
+            max_tokens,
+        );
     }
 
     let mut transcripts: Vec<String> = Vec::new();
@@ -253,9 +260,20 @@ fn process_audio_tch(
     while pos < samples.len() {
         let end = (pos + max_samples).min(samples.len());
         let chunk = &samples[pos..end];
-        let t = transcribe_chunk_tch(chunk, mel_cfg, encoder, decoder, tokenizer, language, punctuation, max_tokens)?;
+        let t = transcribe_chunk_tch(
+            chunk,
+            mel_cfg,
+            encoder,
+            decoder,
+            tokenizer,
+            language,
+            punctuation,
+            max_tokens,
+        )?;
         transcripts.push(t);
-        if end >= samples.len() { break; }
+        if end >= samples.len() {
+            break;
+        }
         pos += step;
     }
 
@@ -281,7 +299,15 @@ fn transcribe_chunk_tch(
     let mel_tensor = Tensor::from_slice(&flat)
         .reshape(&shape)
         .to_kind(Kind::Float);
-    inference::transcribe(&mel_tensor, encoder, decoder, tokenizer, language, punctuation, max_tokens)
+    inference::transcribe(
+        &mel_tensor,
+        encoder,
+        decoder,
+        tokenizer,
+        language,
+        punctuation,
+        max_tokens,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -305,13 +331,26 @@ fn process_audio_mlx(
     let samples = audio::load_audio(audio_path, mel_cfg.sample_rate)
         .with_context(|| format!("Failed to load audio: {:?}", audio_path))?;
 
-    tracing::info!("Audio loaded: {} samples ({:.2}s)", samples.len(), samples.len() as f64 / mel_cfg.sample_rate as f64);
+    tracing::info!(
+        "Audio loaded: {} samples ({:.2}s)",
+        samples.len(),
+        samples.len() as f64 / mel_cfg.sample_rate as f64
+    );
 
     let max_samples = (max_clip_s * mel_cfg.sample_rate as f64) as usize;
     let overlap_samples = (overlap_s * mel_cfg.sample_rate as f64) as usize;
 
     if samples.len() <= max_samples {
-        return transcribe_chunk_mlx(&samples, mel_cfg, encoder, decoder, tokenizer, language, punctuation, max_tokens);
+        return transcribe_chunk_mlx(
+            &samples,
+            mel_cfg,
+            encoder,
+            decoder,
+            tokenizer,
+            language,
+            punctuation,
+            max_tokens,
+        );
     }
 
     let mut transcripts: Vec<String> = Vec::new();
@@ -321,9 +360,20 @@ fn process_audio_mlx(
     while pos < samples.len() {
         let end = (pos + max_samples).min(samples.len());
         let chunk = &samples[pos..end];
-        let t = transcribe_chunk_mlx(chunk, mel_cfg, encoder, decoder, tokenizer, language, punctuation, max_tokens)?;
+        let t = transcribe_chunk_mlx(
+            chunk,
+            mel_cfg,
+            encoder,
+            decoder,
+            tokenizer,
+            language,
+            punctuation,
+            max_tokens,
+        )?;
         transcripts.push(t);
-        if end >= samples.len() { break; }
+        if end >= samples.len() {
+            break;
+        }
         pos += step;
     }
 
@@ -351,7 +401,15 @@ fn transcribe_chunk_mlx(
     let shape_i32: Vec<i32> = shape.iter().map(|&d| d as i32).collect();
     let mel_array = mlx::array::Array::from_data_f32(&flat, &shape_i32);
 
-    mlx::inference::transcribe(&mel_array, encoder, decoder, tokenizer, language, punctuation, max_tokens)
+    mlx::inference::transcribe(
+        &mel_array,
+        encoder,
+        decoder,
+        tokenizer,
+        language,
+        punctuation,
+        max_tokens,
+    )
 }
 
 /// Simple deterministic dithering (matches the Python model's seeded approach).
@@ -360,13 +418,19 @@ fn add_dither(samples: &[f32], dither: f32, seed: u64) -> Vec<f32> {
         return samples.to_vec();
     }
     // Simple LCG pseudo-random for reproducibility
-    let mut rng = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let mut rng = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     let mut out = samples.to_vec();
     for s in out.iter_mut() {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let u = (rng >> 33) as f32 / (u32::MAX as f32);
         // Box-Muller transform for Gaussian noise
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let v = (rng >> 33) as f32 / (u32::MAX as f32);
         let noise = (-2.0 * u.max(1e-38).ln()).sqrt() * (2.0 * std::f32::consts::PI * v).cos();
         *s += dither * noise;

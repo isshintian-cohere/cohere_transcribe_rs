@@ -174,7 +174,7 @@ impl FeedForward {
 struct ConformerConv {
     pw1_w: Array, // (2*d_model, 1, d_model) after MLX transpose
     pw1_b: Array,
-    dw_w: Array,  // (d_model, kW, 1) after MLX transpose
+    dw_w: Array, // (d_model, kW, 1) after MLX transpose
     dw_b: Array,
     // BatchNorm parameters (eval mode: normalize by running stats then affine)
     bn_w: Array,
@@ -334,12 +334,7 @@ struct RelPosAttn {
 }
 
 impl RelPosAttn {
-    fn load(
-        weights: &MlxWeights,
-        prefix: &str,
-        n_heads: i32,
-        d_model: i32,
-    ) -> Result<Self> {
+    fn load(weights: &MlxWeights, prefix: &str, n_heads: i32, d_model: i32) -> Result<Self> {
         let d_k = d_model / n_heads;
         let get = |n: &str| -> Result<Array> {
             Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
@@ -453,12 +448,7 @@ struct ConformerLayer {
 }
 
 impl ConformerLayer {
-    fn load(
-        weights: &MlxWeights,
-        prefix: &str,
-        n_heads: i32,
-        d_model: i32,
-    ) -> Result<Self> {
+    fn load(weights: &MlxWeights, prefix: &str, n_heads: i32, d_model: i32) -> Result<Self> {
         let norm = |n: &str| -> Result<(Array, Array)> {
             let key = format!("{}{}", prefix, n);
             let w = weights.get(&format!("{}.weight", key))?.shallow_clone();
@@ -476,11 +466,7 @@ impl ConformerLayer {
                 d_model,
             )?,
             norm_conv: norm("norm_conv")?,
-            conv: ConformerConv::load(
-                weights,
-                &format!("{}conv.", prefix),
-                d_model,
-            )?,
+            conv: ConformerConv::load(weights, &format!("{}conv.", prefix), d_model)?,
             norm_ff2: norm("norm_feed_forward2")?,
             ff2: FeedForward::load(weights, &format!("{}feed_forward2.", prefix))?,
             norm_out: norm("norm_out")?,
@@ -493,7 +479,9 @@ impl ConformerLayer {
         let x = ops::add(x, &ops::scale(&ff1_out, 0.5));
 
         let (nw2, nb2) = &self.norm_self_att;
-        let attn_out = self.self_attn.forward(&ops::layer_norm(&x, nw2, nb2, 1e-5), pos_emb);
+        let attn_out = self
+            .self_attn
+            .forward(&ops::layer_norm(&x, nw2, nb2, 1e-5), pos_emb);
         let x = ops::add(&x, &attn_out);
 
         let (nw3, nb3) = &self.norm_conv;
@@ -537,8 +525,14 @@ impl ConformerEncoder {
             layers.push(layer);
         }
 
-        let enc_dec_proj_w = weights.get("encoder_decoder_proj.weight").ok().map(|a| a.shallow_clone());
-        let enc_dec_proj_b = weights.get("encoder_decoder_proj.bias").ok().map(|a| a.shallow_clone());
+        let enc_dec_proj_w = weights
+            .get("encoder_decoder_proj.weight")
+            .ok()
+            .map(|a| a.shallow_clone());
+        let enc_dec_proj_b = weights
+            .get("encoder_decoder_proj.bias")
+            .ok()
+            .map(|a| a.shallow_clone());
 
         Ok(Self {
             pre_encode,

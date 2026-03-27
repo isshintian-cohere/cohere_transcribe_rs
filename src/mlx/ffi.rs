@@ -149,12 +149,7 @@ extern "C" {
         s: mlx_stream,
     ) -> c_int;
 
-    pub fn mlx_expand_dims(
-        res: *mut mlx_array,
-        a: mlx_array,
-        axis: c_int,
-        s: mlx_stream,
-    ) -> c_int;
+    pub fn mlx_expand_dims(res: *mut mlx_array, a: mlx_array, axis: c_int, s: mlx_stream) -> c_int;
 
     pub fn mlx_expand_dims_axes(
         res: *mut mlx_array,
@@ -278,12 +273,7 @@ extern "C" {
     ) -> c_int;
 
     // Type conversion
-    pub fn mlx_astype(
-        res: *mut mlx_array,
-        a: mlx_array,
-        dtype: mlx_dtype,
-        s: mlx_stream,
-    ) -> c_int;
+    pub fn mlx_astype(res: *mut mlx_array, a: mlx_array, dtype: mlx_dtype, s: mlx_stream) -> c_int;
 
     // Convolution
     pub fn mlx_conv1d(

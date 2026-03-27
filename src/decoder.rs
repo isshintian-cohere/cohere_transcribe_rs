@@ -81,11 +81,11 @@ impl DecoderAttn {
         let (b, t, _) = hidden_states.size3().unwrap();
         let s = source.size()[1];
 
-        let reshape_q = |z: &Tensor| -> Tensor {
-            z.view([b, t, self.n_heads, self.head_dim]).transpose(1, 2)
-        };
+        let reshape_q =
+            |z: &Tensor| -> Tensor { z.view([b, t, self.n_heads, self.head_dim]).transpose(1, 2) };
         let reshape_kv = |z: &Tensor, seq: i64| -> Tensor {
-            z.view([b, seq, self.n_heads, self.head_dim]).transpose(1, 2)
+            z.view([b, seq, self.n_heads, self.head_dim])
+                .transpose(1, 2)
         };
 
         let q = reshape_q(&linear(hidden_states, &self.q_w, &self.q_b));
@@ -93,7 +93,6 @@ impl DecoderAttn {
         let v = reshape_kv(&linear(source, &self.v_w, &self.v_b), s);
         (q, k, v)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +119,11 @@ impl DecoderFFN {
     }
 
     fn forward(&self, x: &Tensor) -> Tensor {
-        linear(&linear(x, &self.dense_in_w, &self.dense_in_b).relu(), &self.dense_out_w, &self.dense_out_b)
+        linear(
+            &linear(x, &self.dense_in_w, &self.dense_in_b).relu(),
+            &self.dense_out_w,
+            &self.dense_out_b,
+        )
     }
 }
 
@@ -187,10 +190,7 @@ impl DecoderLayer {
         let (q_new, k_new, v_new) = self.self_attn.project_qkv(&normed, &normed);
 
         let (k_full, v_full) = match (self_k_cache, self_v_cache) {
-            (Some(kc), Some(vc)) => (
-                Tensor::cat(&[kc, &k_new], 2),
-                Tensor::cat(&[vc, &v_new], 2),
-            ),
+            (Some(kc), Some(vc)) => (Tensor::cat(&[kc, &k_new], 2), Tensor::cat(&[vc, &v_new], 2)),
             _ => (k_new.shallow_clone(), v_new.shallow_clone()),
         };
 
@@ -251,7 +251,7 @@ impl FixedPosEnc {
 // TransformerDecoder (public)
 // ---------------------------------------------------------------------------
 pub struct TransformerDecoder {
-    token_emb: Tensor,           // (vocab, hidden)
+    token_emb: Tensor, // (vocab, hidden)
     pos_enc: FixedPosEnc,
     emb_norm_w: Tensor,
     emb_norm_b: Tensor,
@@ -302,9 +302,7 @@ impl TransformerDecoder {
         let head_w = weights
             .get("log_softmax.mlp.layer0.weight")?
             .shallow_clone();
-        let head_b = weights
-            .get("log_softmax.mlp.layer0.bias")?
-            .shallow_clone();
+        let head_b = weights.get("log_softmax.mlp.layer0.bias")?.shallow_clone();
 
         Ok(Self {
             token_emb,
@@ -356,10 +354,11 @@ impl TransformerDecoder {
     ) -> (Vec<f32>, Vec<(Option<Tensor>, Option<Tensor>)>) {
         let ids = Tensor::from_slice(&[token_id]);
         let emb = self.token_emb.index_select(0, &ids).unsqueeze(0); // (1, 1, hidden)
-        let pe = self.pos_enc.forward(&[position]).unsqueeze(0);      // (1, 1, hidden)
+        let pe = self.pos_enc.forward(&[position]).unsqueeze(0); // (1, 1, hidden)
         let x = layer_norm(&(emb + pe), &self.emb_norm_w, &self.emb_norm_b);
 
-        let mut new_kv: Vec<(Option<Tensor>, Option<Tensor>)> = Vec::with_capacity(self.layers.len());
+        let mut new_kv: Vec<(Option<Tensor>, Option<Tensor>)> =
+            Vec::with_capacity(self.layers.len());
         let mut hidden = x;
 
         for (i, layer) in self.layers.iter().enumerate() {

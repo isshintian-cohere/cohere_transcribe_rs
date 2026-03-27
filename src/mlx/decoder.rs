@@ -28,12 +28,7 @@ struct DecoderAttn {
 }
 
 impl DecoderAttn {
-    fn load(
-        weights: &MlxWeights,
-        prefix: &str,
-        n_heads: i32,
-        hidden: i32,
-    ) -> Result<Self> {
+    fn load(weights: &MlxWeights, prefix: &str, n_heads: i32, hidden: i32) -> Result<Self> {
         let head_dim = hidden / n_heads;
         let get = |n: &str| -> Result<Array> {
             Ok(weights.get(&format!("{}{}", prefix, n))?.shallow_clone())
@@ -76,13 +71,7 @@ impl DecoderAttn {
 
     /// Full attention: Q from hidden_states, K/V from source (may differ).
     /// Returns (B, T, hidden).
-    fn forward(
-        &self,
-        hidden_states: &Array,
-        k: &Array,
-        v: &Array,
-        mask: Option<&Array>,
-    ) -> Array {
+    fn forward(&self, hidden_states: &Array, k: &Array, v: &Array, mask: Option<&Array>) -> Array {
         let b = hidden_states.dim(0);
         let t = hidden_states.dim(1);
         let q = self.project_q(hidden_states);
@@ -137,12 +126,7 @@ pub struct DecoderLayer {
 }
 
 impl DecoderLayer {
-    fn load(
-        weights: &MlxWeights,
-        prefix: &str,
-        n_heads: i32,
-        hidden: i32,
-    ) -> Result<Self> {
+    fn load(weights: &MlxWeights, prefix: &str, n_heads: i32, hidden: i32) -> Result<Self> {
         let norm = |n: &str| -> Result<(Array, Array)> {
             let key = format!("{}{}", prefix, n);
             let w = weights.get(&format!("{}.weight", key))?.shallow_clone();
@@ -243,7 +227,7 @@ impl FixedPosEnc {
 // TransformerDecoder (public)
 // ---------------------------------------------------------------------------
 pub struct TransformerDecoder {
-    token_emb: Array,      // (vocab, hidden)
+    token_emb: Array, // (vocab, hidden)
     pos_enc: FixedPosEnc,
     emb_norm_w: Array,
     emb_norm_b: Array,
@@ -293,9 +277,7 @@ impl TransformerDecoder {
         let head_w = weights
             .get("log_softmax.mlp.layer0.weight")?
             .shallow_clone();
-        let head_b = weights
-            .get("log_softmax.mlp.layer0.bias")?
-            .shallow_clone();
+        let head_b = weights.get("log_softmax.mlp.layer0.bias")?.shallow_clone();
 
         Ok(Self {
             token_emb,
@@ -350,13 +332,8 @@ impl TransformerDecoder {
             let (kc, vc) = &self_kv_cache[i];
             let (ck, cv) = &cross_kv[i];
 
-            let (new_hidden, k_full, v_full) = layer.forward_cached(
-                &hidden,
-                kc.as_ref(),
-                vc.as_ref(),
-                ck,
-                cv,
-            );
+            let (new_hidden, k_full, v_full) =
+                layer.forward_cached(&hidden, kc.as_ref(), vc.as_ref(), ck, cv);
             hidden = new_hidden;
             new_kv.push((Some(k_full), Some(v_full)));
         }
@@ -366,7 +343,7 @@ impl TransformerDecoder {
         // Squeeze T dim: (1, 1, hidden) → (1, hidden)
         let hidden = ops::squeeze(&hidden, &[1]);
         let logits = ops::linear(&hidden, &self.head_w, &self.head_b); // (1, vocab)
-        let logits = ops::squeeze(&logits, &[0]);                      // (vocab,)
+        let logits = ops::squeeze(&logits, &[0]); // (vocab,)
         let logits_vec = logits.to_vec_f32();
 
         (logits_vec, new_kv)

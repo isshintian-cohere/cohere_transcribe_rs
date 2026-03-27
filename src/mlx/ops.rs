@@ -39,7 +39,13 @@ pub fn linear(x: &Array, w: &Array, b: &Array) -> Array {
 pub fn reshape(a: &Array, shape: &[i32]) -> Array {
     let mut res = Array::empty();
     unsafe {
-        ffi::mlx_reshape(&mut res.ptr, a.ptr, shape.as_ptr(), shape.len(), default_stream())
+        ffi::mlx_reshape(
+            &mut res.ptr,
+            a.ptr,
+            shape.as_ptr(),
+            shape.len(),
+            default_stream(),
+        )
     };
     res
 }
@@ -61,9 +67,7 @@ pub fn transpose(a: &Array, axes: &[i32]) -> Array {
 /// Swap the last two dimensions — shorthand used everywhere in attention.
 pub fn transpose_last2(a: &Array) -> Array {
     let ndim = a.ndim() as i32;
-    let axes: Vec<i32> = (0..ndim - 2)
-        .chain([ndim - 1, ndim - 2])
-        .collect();
+    let axes: Vec<i32> = (0..ndim - 2).chain([ndim - 1, ndim - 2]).collect();
     transpose(a, &axes)
 }
 
@@ -72,9 +76,7 @@ pub fn expand_dims(a: &Array, axes: &[i32]) -> Array {
     // mlx_expand_dims_axes for multiple axes.
     if axes.len() == 1 {
         let mut res = Array::empty();
-        unsafe {
-            ffi::mlx_expand_dims(&mut res.ptr, a.ptr, axes[0], default_stream())
-        };
+        unsafe { ffi::mlx_expand_dims(&mut res.ptr, a.ptr, axes[0], default_stream()) };
         res
     } else {
         let mut res = Array::empty();
@@ -94,7 +96,13 @@ pub fn expand_dims(a: &Array, axes: &[i32]) -> Array {
 pub fn squeeze(a: &Array, axes: &[i32]) -> Array {
     let mut res = Array::empty();
     unsafe {
-        ffi::mlx_squeeze_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream())
+        ffi::mlx_squeeze_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            default_stream(),
+        )
     };
     res
 }
@@ -399,13 +407,7 @@ pub fn conv2d(
 /// input: (N, L, C_in) — MLX channels-last
 /// weight: (C_out, kW, C_in/groups) — transposed from PyTorch OIW
 /// Returns (N, L', C_out)
-pub fn conv1d(
-    input: &Array,
-    weight: &Array,
-    stride: i32,
-    padding: i32,
-    groups: i32,
-) -> Array {
+pub fn conv1d(input: &Array, weight: &Array, stride: i32, padding: i32, groups: i32) -> Array {
     let mut res = Array::empty();
     unsafe {
         ffi::mlx_conv1d(

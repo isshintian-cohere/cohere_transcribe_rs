@@ -40,8 +40,7 @@ pub fn transcribe(
     // 5. Prime decoder with prompt tokens
     let mut last_logits: Vec<f32> = Vec::new();
     for (i, &token_id) in prompt.iter().enumerate() {
-        let (logits, new_kv) =
-            decoder.step(token_id as i32, i as i32, &self_kv_cache, &cross_kv);
+        let (logits, new_kv) = decoder.step(token_id as i32, i as i32, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
         last_logits = logits;
     }
@@ -60,8 +59,7 @@ pub fn transcribe(
         }
         generated.push(next_token as i64);
 
-        let (logits, new_kv) =
-            decoder.step(next_token, position, &self_kv_cache, &cross_kv);
+        let (logits, new_kv) = decoder.step(next_token, position, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
         last_logits = logits;
         position += 1;

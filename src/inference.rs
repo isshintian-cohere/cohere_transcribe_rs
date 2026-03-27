@@ -39,8 +39,7 @@ pub fn transcribe(
 
     for (i, &token_id) in prompt.iter().enumerate() {
         let position = i as i64;
-        let (logits, new_kv) =
-            decoder.step(token_id, position, &self_kv_cache, &cross_kv);
+        let (logits, new_kv) = decoder.step(token_id, position, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
         last_logits = logits;
     }
@@ -59,8 +58,7 @@ pub fn transcribe(
         }
         generated.push(next_token);
 
-        let (logits, new_kv) =
-            decoder.step(next_token, position, &self_kv_cache, &cross_kv);
+        let (logits, new_kv) = decoder.step(next_token, position, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
         last_logits = logits;
         position += 1;

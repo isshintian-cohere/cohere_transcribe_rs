@@ -75,7 +75,10 @@ impl MlxWeights {
         }
 
         tracing::info!("Loaded {} MLX tensors", tensors.len());
-        Ok(Self { _data: data, tensors })
+        Ok(Self {
+            _data: data,
+            tensors,
+        })
     }
 
     pub fn get(&self, name: &str) -> Result<&Array> {
