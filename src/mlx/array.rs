@@ -49,7 +49,7 @@ impl Array {
                 data.as_ptr() as *const c_void,
                 shape.as_ptr(),
                 1,
-                mlx_dtype::float32,
+                mlx_dtype::MLX_FLOAT32,
             )
         };
         unsafe { Self::from_ptr(ptr) }
@@ -67,7 +67,7 @@ impl Array {
                 data.as_ptr() as *const c_void,
                 shape.as_ptr(),
                 shape.len() as i32,
-                mlx_dtype::float32,
+                mlx_dtype::MLX_FLOAT32,
             )
         };
         unsafe { Self::from_ptr(ptr) }
@@ -81,7 +81,7 @@ impl Array {
                 data.as_ptr() as *const c_void,
                 shape.as_ptr(),
                 1,
-                mlx_dtype::int32,
+                mlx_dtype::MLX_INT32,
             )
         };
         unsafe { Self::from_ptr(ptr) }
@@ -96,7 +96,16 @@ impl Array {
     }
 
     pub fn dim(&self, axis: i32) -> i32 {
-        unsafe { ffi::mlx_array_dim(self.ptr, axis) }
+        let n = self.ndim();
+        let shape_ptr = unsafe { ffi::mlx_array_shape(self.ptr) };
+        assert!(!shape_ptr.is_null(), "mlx_array_shape returned null");
+        let idx = if axis >= 0 {
+            axis as usize
+        } else {
+            (n as i32 + axis) as usize
+        };
+        assert!(idx < n, "axis {} out of range for ndim {}", axis, n);
+        unsafe { *shape_ptr.add(idx) }
     }
 
     pub fn size(&self) -> usize {
@@ -105,7 +114,11 @@ impl Array {
 
     pub fn shape(&self) -> Vec<i32> {
         let n = self.ndim();
-        (0..n).map(|i| self.dim(i as i32)).collect()
+        let shape_ptr = unsafe { ffi::mlx_array_shape(self.ptr) };
+        if shape_ptr.is_null() || n == 0 {
+            return vec![];
+        }
+        unsafe { std::slice::from_raw_parts(shape_ptr, n).to_vec() }
     }
 
     // -----------------------------------------------------------------------
@@ -114,7 +127,7 @@ impl Array {
 
     /// Force materialisation of any pending lazy computation.
     pub fn eval(&self) {
-        unsafe { ffi::mlx_array_eval(self.ptr) }
+        unsafe { ffi::mlx_array_eval(self.ptr) };
     }
 
     /// Copy all values to a Rust `Vec<f32>`.  Calls `eval()` first.
@@ -145,7 +158,7 @@ impl Array {
 
 impl Drop for Array {
     fn drop(&mut self) {
-        unsafe { ffi::mlx_array_free(self.ptr) }
+        unsafe { ffi::mlx_array_free(self.ptr) };
     }
 }
 

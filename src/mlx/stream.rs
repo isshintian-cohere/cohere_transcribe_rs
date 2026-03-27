@@ -27,14 +27,16 @@ static CONTEXT: OnceLock<MlxContext> = OnceLock::new();
 pub fn init_mlx(use_gpu: bool) {
     CONTEXT.get_or_init(|| {
         let device_type = if use_gpu {
-            mlx_device_type::gpu
+            mlx_device_type::MLX_GPU
         } else {
-            mlx_device_type::cpu
+            mlx_device_type::MLX_CPU
         };
 
         let device = unsafe { ffi::mlx_device_new_type(device_type, 0) };
         unsafe { ffi::mlx_set_default_device(device) };
-        let stream = unsafe { ffi::mlx_default_stream(device) };
+
+        let mut stream: mlx_stream = std::ptr::null_mut();
+        unsafe { ffi::mlx_get_default_stream(&mut stream, device) };
 
         MlxContext { stream, device }
     });
@@ -51,6 +53,6 @@ pub fn default_stream() -> mlx_stream {
 /// Block until all pending operations on the default stream have completed.
 pub fn synchronize() {
     if let Some(ctx) = CONTEXT.get() {
-        unsafe { ffi::mlx_stream_synchronize(ctx.stream) };
+        unsafe { ffi::mlx_synchronize(ctx.stream) };
     }
 }

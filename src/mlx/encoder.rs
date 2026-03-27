@@ -239,15 +239,7 @@ impl ConformerConv {
 }
 
 fn ops_sigmoid(x: &Array) -> Array {
-    ops_sigmoid_via_ffi(x)
-}
-
-fn ops_sigmoid_via_ffi(x: &Array) -> Array {
-    use super::ffi;
-    use super::stream::default_stream;
-    let mut res = Array::empty();
-    unsafe { ffi::mlx_sigmoid(&mut res.ptr, x.ptr, default_stream()) };
-    res
+    ops::sigmoid(x)
 }
 
 /// Split last dimension at `split_at`, returning (left, right).
@@ -272,23 +264,7 @@ fn split_last(x: &Array, split_at: i32) -> (Array, Array) {
 }
 
 fn mlx_slice(x: &Array, starts: &[i32], stops: &[i32]) -> Array {
-    use super::ffi;
-    use super::stream::default_stream;
-    let n = starts.len();
-    let strides = vec![1i32; n];
-    let mut res = Array::empty();
-    unsafe {
-        ffi::mlx_slice(
-            &mut res.ptr,
-            x.ptr,
-            starts.as_ptr(),
-            stops.as_ptr(),
-            strides.as_ptr(),
-            n,
-            default_stream(),
-        )
-    };
-    res
+    ops::slice(x, starts, stops)
 }
 
 /// BatchNorm in eval mode for NLC layout (x: B,T,C).

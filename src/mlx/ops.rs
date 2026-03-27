@@ -7,6 +7,8 @@
 //!
 //! Shapes use `i32`, not `i64` — MLX's C API uses 32-bit dimension sizes.
 
+use std::ffi::CString;
+
 use super::array::Array;
 use super::ffi::{self, mlx_dtype};
 use super::stream::default_stream;
@@ -66,17 +68,33 @@ pub fn transpose_last2(a: &Array) -> Array {
 }
 
 pub fn expand_dims(a: &Array, axes: &[i32]) -> Array {
-    let mut res = Array::empty();
-    unsafe {
-        ffi::mlx_expand_dims(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream())
-    };
-    res
+    // The mlx-c API has mlx_expand_dims for a single axis and
+    // mlx_expand_dims_axes for multiple axes.
+    if axes.len() == 1 {
+        let mut res = Array::empty();
+        unsafe {
+            ffi::mlx_expand_dims(&mut res.ptr, a.ptr, axes[0], default_stream())
+        };
+        res
+    } else {
+        let mut res = Array::empty();
+        unsafe {
+            ffi::mlx_expand_dims_axes(
+                &mut res.ptr,
+                a.ptr,
+                axes.as_ptr(),
+                axes.len(),
+                default_stream(),
+            )
+        };
+        res
+    }
 }
 
 pub fn squeeze(a: &Array, axes: &[i32]) -> Array {
     let mut res = Array::empty();
     unsafe {
-        ffi::mlx_squeeze(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream())
+        ffi::mlx_squeeze_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream())
     };
     res
 }
@@ -140,15 +158,24 @@ pub fn neg(a: &Array) -> Array {
 // Activations
 // ---------------------------------------------------------------------------
 
+/// ReLU activation: max(0, x).
 pub fn relu(a: &Array) -> Array {
+    let zero = unsafe { Array::from_ptr(ffi::mlx_array_new_float(0.0)) };
     let mut res = Array::empty();
-    unsafe { ffi::mlx_relu(&mut res.ptr, a.ptr, default_stream()) };
+    unsafe { ffi::mlx_maximum(&mut res.ptr, a.ptr, zero.ptr, default_stream()) };
     res
 }
 
+/// SiLU (Swish) activation: x * sigmoid(x).
 pub fn silu(a: &Array) -> Array {
+    let sig = sigmoid(a);
+    mul(a, &sig)
+}
+
+/// Sigmoid activation via mlx_sigmoid.
+pub fn sigmoid(a: &Array) -> Array {
     let mut res = Array::empty();
-    unsafe { ffi::mlx_silu(&mut res.ptr, a.ptr, default_stream()) };
+    unsafe { ffi::mlx_sigmoid(&mut res.ptr, a.ptr, default_stream()) };
     res
 }
 
@@ -237,7 +264,13 @@ pub fn scaled_dot_product_attention(
     scale: f32,
     mask: Option<&Array>,
 ) -> Array {
+    let mask_mode = if mask.is_some() {
+        CString::new("additive").unwrap()
+    } else {
+        CString::new("none").unwrap()
+    };
     let mask_ptr = mask.map_or(std::ptr::null_mut(), |m| m.ptr);
+    let sinks_ptr: ffi::mlx_array = std::ptr::null_mut();
     let mut res = Array::empty();
     unsafe {
         ffi::mlx_fast_scaled_dot_product_attention(
@@ -246,7 +279,9 @@ pub fn scaled_dot_product_attention(
             k.ptr,
             v.ptr,
             scale,
+            mask_mode.as_ptr(),
             mask_ptr,
+            sinks_ptr,
             default_stream(),
         )
     };
@@ -257,11 +292,11 @@ pub fn scaled_dot_product_attention(
 // Indexing
 // ---------------------------------------------------------------------------
 
-/// Gather rows from `arr` at integer `indices` along axis 0.
+/// Gather rows from `arr` at integer `indices` along the given axis.
 /// Equivalent to arr[indices] — used for token/positional embeddings.
 pub fn take(arr: &Array, indices: &Array, axis: i32) -> Array {
     let mut res = Array::empty();
-    unsafe { ffi::mlx_take(&mut res.ptr, arr.ptr, indices.ptr, axis, default_stream()) };
+    unsafe { ffi::mlx_take_axis(&mut res.ptr, arr.ptr, indices.ptr, axis, default_stream()) };
     res
 }
 
@@ -276,7 +311,7 @@ pub fn zeros(shape: &[i32]) -> Array {
             &mut res.ptr,
             shape.as_ptr(),
             shape.len(),
-            mlx_dtype::float32,
+            mlx_dtype::MLX_FLOAT32,
             default_stream(),
         )
     };
@@ -291,7 +326,33 @@ pub fn arange_f32(start: f32, stop: f32, step: f32) -> Array {
             start as f64,
             stop as f64,
             step as f64,
-            mlx_dtype::float32,
+            mlx_dtype::MLX_FLOAT32,
+            default_stream(),
+        )
+    };
+    res
+}
+
+// ---------------------------------------------------------------------------
+// Slicing (used directly by encoder.rs)
+// ---------------------------------------------------------------------------
+
+/// Slice an array along all dimensions with given start/stop indices and
+/// unit strides.
+pub fn slice(x: &Array, starts: &[i32], stops: &[i32]) -> Array {
+    let n = starts.len();
+    let strides = vec![1i32; n];
+    let mut res = Array::empty();
+    unsafe {
+        ffi::mlx_slice(
+            &mut res.ptr,
+            x.ptr,
+            starts.as_ptr(),
+            n,
+            stops.as_ptr(),
+            n,
+            strides.as_ptr(),
+            n,
             default_stream(),
         )
     };
