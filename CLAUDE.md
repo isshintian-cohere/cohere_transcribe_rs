@@ -463,7 +463,25 @@ release zip so users need zero configuration:
 - **vocab.json** is generated once in a separate job and included in every platform zip,
   so users only need to copy it into their model directory.
 
-### 18. MLX weight count differs from tch (2104 vs 2152)
+### 18. MLX eval() placement and GPU-side argmax
+
+MLX lazy evaluation builds a computation graph that should be evaluated at outer loop
+boundaries, not per-layer. Our encoder correctly runs all 48 conformer layers as one lazy
+graph with a single `eval()` after. The decoder runs 8 layers per step — also fine.
+
+The decode loop originally called `to_vec_f32()` on the logits (shape: 16,384) at every
+step to perform argmax on the CPU. This transferred 64 KB per token and broke the lazy graph.
+
+**Fix:** use `Array::argmax_flat()` which calls `mlx_argmax_axis` on GPU and transfers a
+single i32 to CPU. The full graph (8 decoder layers + layer norm + linear head + argmax) is
+now evaluated as one fused Metal dispatch per step.
+
+**Rule of thumb:**
+- `eval()` after encoder forward (1 call)
+- `argmax_flat()` after each decoder step (1 call per token, transfers 4 bytes not 64 KB)
+- Never `eval()` or `to_vec_f32()` per-layer or mid-graph
+
+### 19. MLX weight count differs from tch (2104 vs 2152)
 
 The MLX weight loader skips `num_batches_tracked` tensors (I64 dtype, used only during
 PyTorch training). This results in 2104 loaded tensors vs 2152 for the tch backend

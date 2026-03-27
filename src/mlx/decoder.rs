@@ -300,14 +300,16 @@ impl TransformerDecoder {
 
     /// One greedy-decoding step.
     ///
-    /// Returns (logits: Vec<f32> of shape vocab_size, updated self_kv_cache).
+    /// Returns (next_token_id, updated self_kv_cache).
+    /// Argmax is computed on GPU — only a single i32 is transferred to CPU,
+    /// avoiding a 16,384-element logits transfer per step.
     pub fn step(
         &self,
         token_id: i32,
         position: i32,
         self_kv_cache: &[(Option<Array>, Option<Array>)],
         cross_kv: &[(Array, Array)],
-    ) -> (Vec<f32>, Vec<(Option<Array>, Option<Array>)>) {
+    ) -> (i32, Vec<(Option<Array>, Option<Array>)>) {
         // Token embedding lookup
         let idx = Array::from_slice_i32(&[token_id]);
         let emb = ops::take(&self.token_emb, &idx, 0); // (1, hidden)
@@ -339,8 +341,10 @@ impl TransformerDecoder {
         let hidden = ops::squeeze(&hidden, &[1]);
         let logits = ops::linear(&hidden, &self.head_w, &self.head_b); // (1, vocab)
         let logits = ops::squeeze(&logits, &[0]); // (vocab,)
-        let logits_vec = logits.to_vec_f32();
 
-        (logits_vec, new_kv)
+        // Argmax on GPU — transfers a single i32 instead of 16,384 floats
+        let next_token = logits.argmax_flat() as i32;
+
+        (next_token, new_kv)
     }
 }

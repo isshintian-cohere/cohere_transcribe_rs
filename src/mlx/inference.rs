@@ -38,19 +38,19 @@ pub fn transcribe(
         (0..decoder.layers.len()).map(|_| (None, None)).collect();
 
     // 5. Prime decoder with prompt tokens
-    let mut last_logits: Vec<f32> = Vec::new();
+    let mut next_token = 0i32;
     for (i, &token_id) in prompt.iter().enumerate() {
-        let (logits, new_kv) = decoder.step(token_id as i32, i as i32, &self_kv_cache, &cross_kv);
+        let (token, new_kv) = decoder.step(token_id as i32, i as i32, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
-        last_logits = logits;
+        next_token = token;
     }
 
     // 6. Greedy decode until EOS or max_new_tokens
+    //    Argmax is computed on GPU inside decoder.step() — only a single i32
+    //    is transferred per step instead of the full 16,384-element logits vector.
     let eos_id = tokenizer.special.eos as i32;
     let nospeech_id = tokenizer.special.nospeech as i32;
     let mut generated: Vec<i64> = Vec::new();
-
-    let mut next_token = argmax(&last_logits) as i32;
     let mut position = n_prompt as i32;
 
     while generated.len() < max_new_tokens {
@@ -59,24 +59,14 @@ pub fn transcribe(
         }
         generated.push(next_token as i64);
 
-        let (logits, new_kv) = decoder.step(next_token, position, &self_kv_cache, &cross_kv);
+        let (token, new_kv) = decoder.step(next_token, position, &self_kv_cache, &cross_kv);
         self_kv_cache = new_kv;
-        last_logits = logits;
+        next_token = token;
         position += 1;
-        next_token = argmax(&last_logits) as i32;
     }
 
     tracing::debug!("Generated token IDs: {:?}", generated);
 
     // 7. Decode tokens to text
     Ok(tokenizer.decode(&generated))
-}
-
-fn argmax(logits: &[f32]) -> usize {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i)
-        .unwrap_or(0)
 }
