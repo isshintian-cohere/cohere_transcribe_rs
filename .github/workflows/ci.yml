@@ -227,8 +227,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: macos-arm64-mlx-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: macos-arm64-mlx-cargo-
+          key: macos-arm64-mlx-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-arm64-mlx-cargo-v2-
 
       - name: cargo check — MLX backend
         run: cargo check --no-default-features --features mlx
