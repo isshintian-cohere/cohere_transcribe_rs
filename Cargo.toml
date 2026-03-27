@@ -1,7 +1,12 @@
 [package]
 name = "cohere_transcribe_rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+license = "Apache-2.0"
+description = "Rust implementation for the CohereLabs/cohere-transcribe-03-2026 speech-to-text model. Includes a CLI and an OpenAI-compatible API server."
+repository = "https://github.com/second-state/cohere_transcribe_rs"
+keywords = ["speech-to-text", "transcription", "asr", "mlx", "libtorch"]
+categories = ["multimedia::audio", "command-line-utilities"]
 
 [[bin]]
 name = "transcribe"
