@@ -204,8 +204,8 @@ jobs:
           cp target/release/transcribe-server "$DIR/transcribe-server"
           cp vocab.json                       "$DIR/vocab.json"
 
-          # Metal shader library — compiled by CMake when building mlx-c submodule
-          find target/release/build -name "mlx.metallib" -exec cp {} "$DIR/" \;
+          # Metal shader library — build.rs copies it to target/release/
+          cp target/release/mlx.metallib "$DIR/mlx.metallib"
           ls -lh "$DIR/"
 
           zip -r "$DIR.zip" "$DIR"

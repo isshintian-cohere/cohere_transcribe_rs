@@ -104,7 +104,59 @@ fn build_mlx() {
         println!("cargo:rustc-link-arg={}", clang_rt_path);
     }
 
+    // Copy mlx.metallib next to the output binaries so the MLX runtime
+    // can find it at execution time.  MLX looks for the metallib in the
+    // same directory as the running executable before falling back to the
+    // compile-time METAL_PATH constant (which points into the cmake build
+    // tree and won't exist after deployment).
+    //
+    // OUT_DIR is e.g. target/release/build/<pkg>-<hash>/out — go up 3
+    // levels to reach the profile directory (target/release/) where Cargo
+    // places the final binaries.
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let target_dir = std::path::Path::new(&out_dir)
+        .parent() // build/<pkg>-<hash>/
+        .and_then(|p| p.parent()) // build/
+        .and_then(|p| p.parent()) // target/<profile>/
+        .expect("cannot derive target dir from OUT_DIR");
+
+    // Search the cmake build tree for mlx.metallib
+    if let Some(metallib) = find_file(&dst, "mlx.metallib") {
+        let dest = target_dir.join("mlx.metallib");
+        std::fs::copy(&metallib, &dest).unwrap_or_else(|e| {
+            panic!(
+                "Failed to copy {} → {}: {}",
+                metallib.display(),
+                dest.display(),
+                e
+            )
+        });
+        println!("cargo:warning=Copied mlx.metallib to {}", dest.display());
+    } else {
+        println!("cargo:warning=mlx.metallib not found in cmake build tree — Metal GPU ops will fail at runtime");
+    }
+
     // Rerun if mlx-c sources change
     println!("cargo:rerun-if-changed=mlx-c/CMakeLists.txt");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Recursively search for a file by name under a directory.
+fn find_file(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    if !dir.is_dir() {
+        return None;
+    }
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.is_file() && path.file_name().map_or(false, |n| n == name) {
+            return Some(path);
+        }
+        if path.is_dir() {
+            if let Some(found) = find_file(&path, name) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }

@@ -386,61 +386,15 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
 
-      - name: Copy mlx.metallib next to binaries
-        run: |
-          # MLX runtime looks for mlx.metallib in the same directory as the binary
-          find target/release/build -name "mlx.metallib" -exec cp {} target/release/ \;
-          ls -lh target/release/mlx.metallib
-
-      - name: Diagnostic — check binary and environment
-        run: |
-          echo "=== Binary info ==="
-          file target/release/transcribe
-          otool -L target/release/transcribe | head -20
-          echo ""
-          echo "=== Metallib ==="
-          ls -lh target/release/mlx.metallib || echo "NO METALLIB FOUND"
-          echo ""
-          echo "=== Model files ==="
-          ls -lh "$MODEL_DIR/"
-          echo ""
-          echo "=== System memory ==="
-          sysctl hw.memsize
-          vm_stat | head -10
-          echo ""
-          echo "=== Metal GPU ==="
-          system_profiler SPDisplaysDataType 2>/dev/null | head -20 || true
+      - name: Verify mlx.metallib was placed by build.rs
+        run: ls -lh target/release/mlx.metallib
 
       - name: CLI — transcribe sample2.wav
         run: |
-          set +e
-          echo "Starting transcription..."
-          ./target/release/transcribe \
-            -vv \
+          result=$(./target/release/transcribe \
             --model-dir "$MODEL_DIR" \
             --language en \
-            tests/fixtures/sample2.wav \
-            > /tmp/transcribe_stdout.txt 2> /tmp/transcribe_stderr.txt
-          EXIT_CODE=$?
-          echo "Exit code: $EXIT_CODE"
-          echo ""
-          echo "=== STDOUT ==="
-          cat /tmp/transcribe_stdout.txt
-          echo ""
-          echo "=== STDERR ==="
-          cat /tmp/transcribe_stderr.txt
-          echo ""
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Process crashed with exit code $EXIT_CODE"
-            # Check for crash logs
-            ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -5
-            for f in $(ls -t ~/Library/Logs/DiagnosticReports/transcribe* 2>/dev/null | head -1); do
-              echo "=== Crash report ==="
-              head -100 "$f"
-            done
-            exit $EXIT_CODE
-          fi
-          result=$(cat /tmp/transcribe_stdout.txt)
+            tests/fixtures/sample2.wav)
           echo "Transcript: $result"
           echo "$result" | grep -qi "fox\|lazy\|dog"
 
