@@ -1,12 +1,8 @@
-# cohere_transcribe_rs
+# Cohere Transcribe in Rust
 
-[![CI](https://github.com/second-state/cohere_transcribe_rs/actions/workflows/ci.yml/badge.svg)](https://github.com/second-state/cohere_transcribe_rs/actions/workflows/ci.yml)
-[![Release](https://github.com/second-state/cohere_transcribe_rs/actions/workflows/release.yml/badge.svg)](https://github.com/second-state/cohere_transcribe_rs/releases)
-
-Transcribe speech to text using the
+Rust implementation for the
 [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
-model — a fast Rust CLI and OpenAI-compatible API server with no Python or PyTorch
-required at runtime.
+model. Includes a self-contained CLI and an OpenAI-compatible API server for AI agents.
 
 Supports English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Greek,
 Arabic, Japanese, Chinese, Vietnamese, and Korean.
@@ -83,162 +79,7 @@ The server is OpenAI Whisper API compatible — works with any OpenAI client lib
 
 ---
 
-## Backends
-
-Two compute backends are available — select one at compile time:
-
-| Backend | Platform | Feature flag | Accelerator |
-|---------|----------|-------------|-------------|
-| **libtorch** (default) | Linux x86\_64, Linux aarch64 | `--features tch-backend` | CPU (BLAS-optimized) |
-| **MLX** | macOS Apple Silicon | `--features mlx` | Apple GPU (Metal) |
-
-Both backends produce identical output from the same weights.
-
----
-
-## Requirements
-
-**All platforms:**
-- **Rust** stable (1.70+) — install from [rustup.rs](https://rustup.rs)
-- **8 GB RAM** — the model weights expand to ~5.6 GB at runtime
-- **Python + sentencepiece** — one-time only, to extract `vocab.json` (Step 3)
-
-**Linux (libtorch backend):**
-- **libtorch** C++ library — downloaded once, ~500 MB (see Step 1a)
-
-**macOS Apple Silicon (MLX backend):**
-- **mlx-c** — C bindings for Apple MLX, built from source (see Step 1b)
-- macOS 14+ with an M-series chip
-
----
-
-## Setup
-
-### Step 1a — Install libtorch (Linux only)
-
-Pick the build for your platform and extract it to `/opt/libtorch`.
-This is the C++ library from PyTorch.org; no Python runtime is involved.
-
-**Linux x86\_64:**
-```bash
-curl -Lo libtorch.zip \
-  'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip'
-sudo unzip libtorch.zip -d /opt
-```
-
-**Linux ARM64** (AWS Graviton3, Ampere Altra — requires SVE support):
-```bash
-curl -Lo libtorch.tar.gz \
-  'https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz'
-sudo tar xzf libtorch.tar.gz -C /opt
-```
-
-Both commands produce `/opt/libtorch/`. Set `LIBTORCH=/your/path` to use a different location.
-
-> **Docker on macOS:** Extract libtorch to a native Linux path such as `/opt/libtorch`,
-> not onto the macOS volume mount (e.g. `/Users/…`). The Linux linker cannot read
-> large shared libraries through the virtiofs layer.
-
----
-
-### Step 1b — Install mlx-c (macOS Apple Silicon only)
-
-The MLX backend links against [mlx-c](https://github.com/ml-explore/mlx-c), the C API
-wrapper for Apple's MLX framework.
-
-```bash
-# 1. Install the MLX C++ library via Homebrew
-brew install mlx
-
-# 2. Build and install mlx-c from source
-git clone --depth 1 https://github.com/ml-explore/mlx-c.git /tmp/mlx-c
-cmake -S /tmp/mlx-c -B /tmp/mlx-c/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix mlx)" \
-  -DCMAKE_INSTALL_PREFIX=/opt/mlx
-cmake --build /tmp/mlx-c/build --parallel "$(sysctl -n hw.logicalcpu)"
-sudo cmake --install /tmp/mlx-c/build
-```
-
-This produces `/opt/mlx/lib/libmlxc.dylib` and `/opt/mlx/include/mlx/c/`.
-Set `MLX_DIR=/your/path` to use a different install location.
-
----
-
-### Step 2 — Download model weights
-
-```bash
-pip install huggingface_hub
-huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
-  --local-dir models/cohere-transcribe-03-2026
-```
-
----
-
-### Step 3 — Extract the vocabulary (one time only)
-
-The model uses a SentencePiece tokenizer. Run this script once to produce `vocab.json`,
-which the Rust binary reads at runtime. Python is not needed after this step.
-
-```bash
-pip install sentencepiece
-python tools/extract_vocab.py --model_dir models/cohere-transcribe-03-2026
-```
-
----
-
-### Step 4 — Build
-
-**Linux (libtorch backend, default):**
-```bash
-LIBTORCH=/opt/libtorch cargo build --release
-```
-
-The `LIBTORCH` path is baked into the binary's RPATH by `build.rs`, so the binary
-runs without `LD_LIBRARY_PATH`.
-
-**macOS Apple Silicon (MLX backend):**
-```bash
-MLX_DIR=/opt/mlx cargo build --release --no-default-features --features mlx
-```
-
-The `MLX_DIR` path is similarly embedded as RPATH — no `DYLD_LIBRARY_PATH` at runtime.
-
-> **Docker on macOS (Linux builds):** If the project source is on a macOS volume mount,
-> set `CARGO_TARGET_DIR` to a native Linux path to prevent SIGBUS during compilation:
-> ```bash
-> LIBTORCH=/opt/libtorch CARGO_TARGET_DIR=/tmp/cohere_target cargo build --release -j 1
-> ```
-
-The binary is written to `target/release/transcribe`
-(or `$CARGO_TARGET_DIR/release/transcribe` if you set that variable).
-
----
-
-## Running
-
-The binary has the library path baked into its RPATH at build time, so no environment
-variables are needed at runtime — just run it directly:
-
-```bash
-./target/release/transcribe --model-dir models/cohere-transcribe-03-2026 recording.wav
-```
-
-This works for both backends (Linux/libtorch and macOS/MLX) as long as you built with
-the correct `LIBTORCH=` or `MLX_DIR=` path and haven't moved the library since building.
-
-If you have moved libtorch or need to override the path, the `transcribe.sh` wrapper sets
-`LD_LIBRARY_PATH` as a fallback:
-
-```bash
-./transcribe.sh --model-dir models/cohere-transcribe-03-2026 recording.wav
-```
-
-The wrapper searches for libtorch in: `$LIBTORCH` → `/opt/libtorch` → `./libtorch`.
-
----
-
-## Options
+## CLI Reference
 
 ```
 USAGE:
@@ -275,6 +116,22 @@ Audio is automatically converted to 16 kHz mono.
 Files longer than ~35 seconds are split into overlapping chunks (5 s overlap)
 and the results joined automatically.
 
+### Examples
+
+```bash
+# Transcribe a single file
+./transcribe -m models/cohere-transcribe-03-2026 interview.mp3
+
+# French, no punctuation
+./transcribe -m models/cohere-transcribe-03-2026 --language fr --no-punctuation speech.wav
+
+# Multiple files — prints filename before each transcript
+./transcribe -m models/cohere-transcribe-03-2026 call1.wav call2.wav call3.flac
+
+# Show model loading progress
+./transcribe -m models/cohere-transcribe-03-2026 -v audio.wav
+```
+
 ---
 
 ## API Server
@@ -285,15 +142,10 @@ It serves the same model as the CLI and is a drop-in replacement for the OpenAI 
 ### Start the server
 
 ```bash
-# Linux (tch-backend)
-./target/release/transcribe-server \
+./transcribe-server \
   --model-dir models/cohere-transcribe-03-2026 \
   --host 0.0.0.0 \
   --port 8080
-
-# macOS (MLX backend) — same binary, no extra flags needed
-./target/release/transcribe-server \
-  --model-dir models/cohere-transcribe-03-2026
 ```
 
 The server loads the model at startup (~30–90 s depending on hardware), then prints:
@@ -405,36 +257,116 @@ OPTIONS:
 
 ---
 
-## Examples
+## Build from Source
+
+### Backends
+
+Two compute backends are available — select one at compile time:
+
+| Backend | Platform | Feature flag | Accelerator |
+|---------|----------|-------------|-------------|
+| **libtorch** (default) | Linux x86\_64, Linux aarch64 | `--features tch-backend` | CPU (BLAS-optimized) |
+| **MLX** | macOS Apple Silicon | `--features mlx` | Apple GPU (Metal) |
+
+Both backends produce identical output from the same weights.
+
+### Requirements
+
+**All platforms:**
+- **Rust** stable (1.70+) — install from [rustup.rs](https://rustup.rs)
+- **8 GB RAM** — the model weights expand to ~5.6 GB at runtime
+- **Python + sentencepiece** — one-time only, to extract `vocab.json`
+
+**Linux (libtorch backend):**
+- **libtorch** C++ library — downloaded once, ~500 MB
+
+**macOS Apple Silicon (MLX backend):**
+- macOS 14+ with an M-series chip
+- mlx-c is built automatically from the git submodule by `build.rs`
+
+### Step 1 — Install libtorch (Linux only)
+
+Pick the build for your platform and extract it to `/opt/libtorch`.
+This is the C++ library from PyTorch.org; no Python runtime is involved.
+
+**Linux x86\_64:**
+```bash
+curl -Lo libtorch.zip \
+  'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip'
+sudo unzip libtorch.zip -d /opt
+```
+
+**Linux ARM64** (AWS Graviton3, Ampere Altra — requires SVE support):
+```bash
+curl -Lo libtorch.tar.gz \
+  'https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz'
+sudo tar xzf libtorch.tar.gz -C /opt
+```
+
+Both commands produce `/opt/libtorch/`. Set `LIBTORCH=/your/path` to use a different location.
+
+> **Docker on macOS:** Extract libtorch to a native Linux path such as `/opt/libtorch`,
+> not onto the macOS volume mount (e.g. `/Users/…`). The Linux linker cannot read
+> large shared libraries through the virtiofs layer.
+
+### Step 2 — Download model weights
 
 ```bash
-# Transcribe a single file
-./transcribe.sh -m models/cohere-transcribe-03-2026 interview.mp3
-
-# French, no punctuation
-./transcribe.sh -m models/cohere-transcribe-03-2026 --language fr --no-punctuation speech.wav
-
-# Multiple files — prints filename before each transcript
-./transcribe.sh -m models/cohere-transcribe-03-2026 call1.wav call2.wav call3.flac
-
-# Show model loading progress
-./transcribe.sh -m models/cohere-transcribe-03-2026 -v audio.wav
+pip install huggingface_hub
+huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+  --local-dir models/cohere-transcribe-03-2026
 ```
+
+### Step 3 — Extract the vocabulary (one time only)
+
+The model uses a SentencePiece tokenizer. Run this script once to produce `vocab.json`,
+which the Rust binary reads at runtime. Python is not needed after this step.
+
+```bash
+pip install sentencepiece
+python tools/extract_vocab.py --model_dir models/cohere-transcribe-03-2026
+```
+
+### Step 4 — Build
+
+**Linux (libtorch backend, default):**
+```bash
+LIBTORCH=/opt/libtorch cargo build --release
+```
+
+The `LIBTORCH` path is baked into the binary's RPATH by `build.rs`, so the binary
+runs without `LD_LIBRARY_PATH`.
+
+**macOS Apple Silicon (MLX backend):**
+```bash
+git submodule update --init --recursive
+cargo build --release --no-default-features --features mlx
+```
+
+> **Docker on macOS (Linux builds):** If the project source is on a macOS volume mount,
+> set `CARGO_TARGET_DIR` to a native Linux path to prevent SIGBUS during compilation:
+> ```bash
+> LIBTORCH=/opt/libtorch CARGO_TARGET_DIR=/tmp/cohere_target cargo build --release -j 1
+> ```
+
+### Step 5 — Run
+
+```bash
+./target/release/transcribe --model-dir models/cohere-transcribe-03-2026 recording.wav
+```
+
+No environment variables needed — RPATH is baked in at build time.
 
 ---
 
 ## Troubleshooting
 
 **`libtorch not found`** (Linux)
-Set `LIBTORCH=/path/to/libtorch` before running `transcribe.sh`, or install to `/opt/libtorch`.
-
-**`libmlxc.dylib not found`** (macOS)
-The library path is baked into the binary RPATH at build time. If you moved mlx-c
-after building, rebuild with `MLX_DIR=/new/path cargo build …`. As a temporary
-workaround: `DYLD_LIBRARY_PATH=/opt/mlx/lib:$(brew --prefix mlx)/lib ./target/release/transcribe …`.
+Set `LIBTORCH=/path/to/libtorch` before building, or install to `/opt/libtorch`.
 
 **`Missing required file 'vocab.json'`**
-Run `python tools/extract_vocab.py --model_dir <model_dir>` (Step 3).
+Run `python tools/extract_vocab.py --model_dir <model_dir>`, or copy `vocab.json`
+from the release zip into the model directory.
 
 **Process killed immediately (exit 137)**
 Out of memory. The model needs ~5.6 GB of RAM. Check with `free -h` (Linux) or
@@ -448,8 +380,4 @@ or use the macOS MLX backend on Apple hardware.
 
 **`ELF section name out of range` at link time** (Linux)
 libtorch is on a Docker volume-mounted macOS path. Move it to a native Linux
-path such as `/opt/libtorch` (see Step 1a note).
-
-**MLX build fails: `mlxc` not found**
-Ensure you ran Step 1b and set `MLX_DIR=/opt/mlx` (or wherever you installed mlx-c).
-Verify with `ls /opt/mlx/lib/libmlxc.dylib`.
+path such as `/opt/libtorch`.
