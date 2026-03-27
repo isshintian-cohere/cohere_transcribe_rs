@@ -97,7 +97,9 @@ impl ConvSubsampling {
         let x = add_bias_nhwc(&x, &self.c6_b);
         let x = ops::relu(&x);
 
-        // x: (1, T', n_mels/8, 256) → (1, T', 256 * n_mels/8)
+        // x: (1, T', n_mels/8, 256) in NHWC — transpose to match PyTorch's
+        // NCHW flatten order: (1, T', 256, n_mels/8) → (1, T', 256*n_mels/8)
+        let x = ops::transpose(&x, &[0, 1, 3, 2]);
         let t_prime = x.dim(1);
         let feat = x.dim(2) * x.dim(3);
         let x = ops::reshape(&x, &[1, t_prime, feat]);

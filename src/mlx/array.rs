@@ -165,17 +165,12 @@ impl Drop for Array {
 // C API.  Provide an explicit method instead of implementing Clone to avoid
 // accidental copies.
 impl Array {
-    /// Shallow copy — wraps the same storage.
-    /// The caller is responsible for ensuring the original outlives the copy
-    /// (or that eval has been called, materialising the data).
-    ///
-    /// TODO: use mlx_array_retain if/when available in mlx-c.
+    /// Shallow copy — uses `mlx_array_set` to share the underlying storage
+    /// with reference counting.  This is O(1) and avoids the expensive CPU
+    /// round-trip that the previous `to_vec_f32` + `from_data_f32` approach used.
     pub fn shallow_clone(&self) -> Self {
-        // Re-create from data to guarantee independent ownership.
-        // This is the safe fallback — the eval round-trip is acceptable for
-        // weight tensors that are only cloned once at load time.
-        let data = self.to_vec_f32();
-        let shape = self.shape();
-        Self::from_data_f32(&data, &shape)
+        let mut new = Self::empty();
+        unsafe { ffi::mlx_array_set(&mut new.ptr, self.ptr) };
+        new
     }
 }
