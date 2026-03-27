@@ -27,6 +27,19 @@ env:
 jobs:
 
   # ───────────────────────────────────────────────────────────────────────────
+  # 0. Lint — formatting check (fast, no dependencies)
+  # ───────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # ───────────────────────────────────────────────────────────────────────────
   # 1. Linux x86_64 — libtorch C++ backend
   # ───────────────────────────────────────────────────────────────────────────
   linux-x86_64:
