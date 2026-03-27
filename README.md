@@ -13,20 +13,7 @@ Arabic, Japanese, Chinese, Vietnamese, and Korean.
 
 No build tools needed — just download and run.
 
-### 1. Download model weights
-
-The model is gated — you must log in to HuggingFace and accept the license terms first:
-<https://huggingface.co/CohereLabs/cohere-transcribe-03-2026>
-
-Then download:
-
-```bash
-pip install huggingface_hub
-huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
-  --local-dir models/cohere-transcribe-03-2026
-```
-
-### 2. Download the release for your platform
+### 1. Download the release for your platform
 
 Go to [Releases](https://github.com/second-state/cohere_transcribe_rs/releases) and
 download the zip for your platform:
@@ -45,18 +32,32 @@ unzip transcribe-linux-x86_64.zip
 cd transcribe-linux-x86_64
 ```
 
+### 2. Download model weights
+
+The model is gated — you must log in to HuggingFace and accept the license terms first:
+<https://huggingface.co/CohereLabs/cohere-transcribe-03-2026>
+
+Then download the weights into a `models/` directory inside the release folder:
+
+```bash
+pip install huggingface_hub
+huggingface-cli login            # paste your HF_TOKEN when prompted
+huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+  --local-dir models/cohere-transcribe-03-2026
+```
+
 ### 3. Copy vocab.json into the model directory
 
 The release includes a pre-generated `vocab.json`. Copy it to the model folder:
 
 ```bash
-cp vocab.json ../models/cohere-transcribe-03-2026/
+cp vocab.json models/cohere-transcribe-03-2026/
 ```
 
 ### 4. Test the CLI
 
 ```bash
-./transcribe --model-dir ../models/cohere-transcribe-03-2026 --language en recording.wav
+./transcribe --model-dir models/cohere-transcribe-03-2026 --language en recording.wav
 ```
 
 No `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` needed — the binary has RPATH baked in
@@ -66,7 +67,7 @@ and finds `libtorch/` (Linux) or `mlx.metallib` (macOS) in the same directory.
 
 ```bash
 # Start the server
-./transcribe-server --model-dir ../models/cohere-transcribe-03-2026 --port 8080 &
+./transcribe-server --model-dir models/cohere-transcribe-03-2026 --port 8080 &
 
 # Wait for "Listening on ..." message, then:
 curl -X POST http://localhost:8080/v1/audio/transcriptions \
