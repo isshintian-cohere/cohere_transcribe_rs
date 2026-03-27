@@ -394,3 +394,78 @@ HuggingFace and saves to the cache.
     python tools/extract_vocab.py --model_dir models/cohere-transcribe-03-2026
 ```
 Store `HF_TOKEN` as a GitHub Actions secret. This adds ~5–10 min download time per run.
+
+### 13. MLX ConvSubsampling flatten order — NHWC vs NCHW
+
+The most critical MLX bug was in `ConvSubsampling`. After the five Conv2d layers, the output
+has shape `(1, T', F, C)` in MLX's NHWC layout. The PyTorch code flattens the last two dims
+in NCHW order `(1, T', C, F)` before the linear projection. Naively flattening NHWC output
+produces a different feature ordering, which garbles the encoder output and causes the decoder
+to emit only a single token (EOS immediately).
+
+**Fix:** transpose dims 2 and 3 before flatten:
+```rust
+let x = ops::transpose(&x, &[0, 1, 3, 2]);  // (1, T', F, C) → (1, T', C, F)
+let x = ops::reshape(&x, &[1, t_prime, feat]);
+```
+
+**Lesson:** when porting PyTorch → MLX, any operation that depends on memory layout (flatten,
+reshape, view) must account for the NHWC↔NCHW difference. Convolutions and matmuls handle
+this internally, but flatten/reshape do not.
+
+### 14. MLX `mlx_array_set` for O(1) weight cloning
+
+The `shallow_clone()` method originally did a full CPU round-trip: `to_vec_f32()` →
+`from_data_f32()`. For the ~2100 weight tensors loaded at startup, this added ~75 seconds
+to encoder construction.
+
+**Fix:** use `mlx_array_set(dst, src)` which shares underlying storage via reference counting:
+```rust
+pub fn shallow_clone(&self) -> Self {
+    let mut new = Self::empty();
+    unsafe { ffi::mlx_array_set(&mut new.ptr, self.ptr) };
+    new
+}
+```
+This is O(1) and preserves lazy evaluation — no data is copied or evaluated.
+
+### 15. MLX batch norm — avoid CPU round-trips in the compute graph
+
+The original `batch_norm_nlc` used helper functions that called `to_vec_f32()` to compute
+`1/sqrt(var + eps)` on the CPU, then re-uploaded the result. This forced 96 GPU→CPU→GPU
+round-trips per encoder forward pass (48 layers × 2 ops), breaking Metal kernel fusion.
+
+**Fix:** use `mlx_rsqrt` (1/sqrt(x)) which is a single GPU-native op:
+```rust
+let inv_std = ops::rsqrt(&ops::add(&var, &eps_arr));
+let x_norm = ops::mul(&ops::sub(x, &mean), &inv_std);
+```
+
+**General rule:** never call `to_vec_f32()` or `eval()` in the middle of a compute graph
+unless you specifically need to read data on the CPU. Any CPU round-trip breaks lazy
+evaluation and prevents Metal kernel fusion.
+
+### 16. Tracing output must go to stderr
+
+Both `src/main.rs` and `src/bin/server.rs` must configure `tracing_subscriber` with
+`.with_writer(std::io::stderr)`. Without this, log output goes to stdout and contaminates
+transcript output when captured via `result=$(./transcribe ...)` in shell scripts or CI.
+
+### 17. Release CI — RPATH and bundled libraries
+
+The release workflow (`release.yml`) bundles platform-specific runtime libraries in each
+release zip so users need zero configuration:
+
+- **Linux (tch):** the full `libtorch/` directory is included. `RUSTFLAGS` sets
+  `-Wl,-rpath,$ORIGIN/libtorch/lib` so the binary finds libraries relative to itself.
+- **macOS (MLX):** `mlx.metallib` (Metal shader library) is copied next to the binary.
+  The MLX backend is statically linked, so no dylibs are needed.
+- **vocab.json** is generated once in a separate job and included in every platform zip,
+  so users only need to copy it into their model directory.
+
+### 18. MLX weight count differs from tch (2104 vs 2152)
+
+The MLX weight loader skips `num_batches_tracked` tensors (I64 dtype, used only during
+PyTorch training). This results in 2104 loaded tensors vs 2152 for the tch backend
+(difference = 48 conformer layers × 1 `num_batches_tracked` tensor each). This is expected
+and correct — batch norm in eval mode uses `running_mean` and `running_var` only.
