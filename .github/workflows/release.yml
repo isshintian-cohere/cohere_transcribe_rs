@@ -31,7 +31,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pip install -q huggingface_hub sentencepiece
-          huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+          python -m huggingface_hub.cli download CohereLabs/cohere-transcribe-03-2026 \
             --include "tokenizer.model" \
             --local-dir models/cohere-transcribe-03-2026 \
             --token "$HF_TOKEN"
