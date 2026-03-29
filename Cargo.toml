@@ -12,15 +12,15 @@ exclude = ["mlx-c/", ".github/", "tests/", "models/", "tools/", ".gitmodules"]
 [[bin]]
 name = "transcribe"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "transcribe-server"
 path = "src/bin/server.rs"
+required-features = ["server"]
 
 [dependencies]
 # libtorch backend (Linux x86_64 / aarch64 with SVE)
-# tch 0.20 (torch 2.4 C++ API) + LIBTORCH_BYPASS_VERSION_CHECK works with libtorch 2.7.x
-# See https://github.com/second-state/qwen3_asr_rs for the same approach
 tch = { version = "0.20", optional = true }
 
 # Model weight loading (shared by both backends)
@@ -46,24 +46,25 @@ thiserror = "1"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
-# CLI argument parsing
-clap = { version = "4", features = ["derive"] }
+# CLI argument parsing (optional — only needed for the CLI/server binaries)
+clap = { version = "4", features = ["derive"], optional = true }
 
-# API server
-axum = { version = "0.7", features = ["multipart"] }
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-tempfile = "3"
+# API server (optional — only needed for the server binary)
+axum = { version = "0.7", features = ["multipart"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+tempfile = { version = "3", optional = true }
 
 [features]
-# Exactly one backend must be selected.
-# tch-backend: libtorch C++ (Linux x86_64 / aarch64, default)
-# mlx:         Apple MLX via C FFI (macOS Apple Silicon only)
-default = ["tch-backend"]
+# By default only the core library is built (no CLI/server deps).
+# Select exactly one backend feature.
+default = []
 tch-backend = ["dep:tch"]
 mlx = []
+cli = ["dep:clap", "dep:tracing-subscriber"]
+server = ["cli", "dep:axum", "dep:tokio", "dep:tower-http", "dep:tempfile"]
 
 [build-dependencies]
 cmake = "0.1"
