@@ -3,8 +3,23 @@ fn main() {
         build_tch();
     }
     if std::env::var("CARGO_FEATURE_MLX").is_ok() {
-        build_mlx();
+        if std::env::var("COHERE_SKIP_MLX_BUILD").is_ok() {
+            println!("cargo:warning=COHERE_SKIP_MLX_BUILD set — skipping MLX cmake build (Metal GPU ops will not work)");
+            emit_mlx_link_stubs();
+        } else {
+            build_mlx();
+        }
     }
+}
+
+/// Emit minimal link directives so the Rust code compiles and links for
+/// type-checking / CI purposes even without the full cmake build.
+fn emit_mlx_link_stubs() {
+    println!("cargo:rustc-link-lib=framework=Metal");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=Accelerate");
+    println!("cargo:rustc-link-lib=framework=MetalPerformanceShaders");
+    println!("cargo:rustc-link-lib=c++");
 }
 
 /// Embed the libtorch library path as RPATH in the binary so that it runs
